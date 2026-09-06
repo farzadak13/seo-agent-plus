@@ -2,15 +2,23 @@
 name = "ai-seo-agent"
 version = "0.1.0"
 description = "AI SEO Agent - deterministic SEO decision engine"
-requires-python = ">=3.13,<3.14"
-dependencies = []
-
-[dependency-groups]
-dev = [
-    "pytest>=9,<10",
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "pydantic>=2,<3",
+    "numpy>=2,<3",
 ]
 
+[dependency-groups]
+dev = ["pytest>=9,<10"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["tests*", "db*"]
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
-addopts = "-ra"
+testpaths=["tests"]
+pythonpath=["."]
+addopts="-ra"
+markers=[
+  "integration: tests requiring external services or API credentials",
+]
