@@ -69,6 +69,8 @@ class TitleReasoningResult(BaseModel):
 
     selected_candidate_id: str | None
 
+    provider_id: str | None = None
+
     reasons: list[str]
 
     evidence: dict

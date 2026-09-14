@@ -390,3 +390,70 @@ def test_empty_content_is_invalid_response(
         exc_info.value.failure_type
         == LLMFailureType.INVALID_JSON
     )
+
+
+
+def test_observability_is_cleared_before_each_request(
+    monkeypatch,
+):
+    responses = [
+        {
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            },
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": '{"candidates":[]}',
+                    },
+                }
+            ],
+        },
+        RuntimeError("network"),
+    ]
+
+    def fake_urlopen(
+        http_request,
+        timeout,
+    ):
+        response = responses.pop(0)
+
+        if isinstance(response, Exception):
+            raise response
+
+        return FakeResponse(response)
+
+    monkeypatch.setattr(
+        "app.reasoning.arvan_transport.request.urlopen",
+        fake_urlopen,
+    )
+
+    transport = ArvanTransport(
+        config=make_config()
+    )
+
+    transport.complete(messages=[])
+
+    assert transport.last_usage == {
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+    }
+
+    assert transport.last_response_metadata == {
+        "id": None,
+        "model": None,
+        "object": None,
+        "finish_reason": "stop",
+    }
+
+    with pytest.raises(
+        RuntimeError
+    ):
+        transport.complete(messages=[])
+
+    assert transport.last_usage == {}
+    assert transport.last_response_metadata == {}

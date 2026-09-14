@@ -1,3 +1,4 @@
+
 from app.models.features import FeatureSet
 from app.models.signals import Signal, SignalSeverity, SignalType
 
@@ -88,3 +89,4 @@ def detect_position_decline(
             "reason": "meaningful_position_decline",
         },
     )
+

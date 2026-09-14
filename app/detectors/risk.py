@@ -1,3 +1,4 @@
+
 from collections.abc import Sequence
 
 from app.models.signals import (
@@ -89,3 +90,4 @@ def detect_signal_risks(
         )
 
     return risks
+

@@ -10,6 +10,7 @@ from app.models.strategies import (
     StrategyStatus,
     StrategyType,
 )
+from app.models.signals import SignalType  # <-- اضافه شد
 from app.strategy.engine import build_strategy
 
 
@@ -62,7 +63,7 @@ def make_opportunity(
 def test_ctr_recovery_maps_to_title_strategy():
     opportunity = make_opportunity(
         opportunity_type=OpportunityType.CTR_RECOVERY,
-        signal_types=["ctr_drop"],
+        signal_types=[SignalType.CTR_DROP.value],  # <-- اصلاح شد
     )
 
     strategy = build_strategy(
@@ -72,16 +73,13 @@ def test_ctr_recovery_maps_to_title_strategy():
 
     assert strategy is not None
     assert strategy.status == StrategyStatus.RECOMMENDED
-    assert (
-        strategy.strategy_type
-        == StrategyType.SERP_TITLE_OPTIMIZATION
-    )
+    assert strategy.strategy_type == StrategyType.SERP_TITLE_OPTIMIZATION
 
 
 def test_position_recovery_maps_to_internal_linking():
     opportunity = make_opportunity(
         opportunity_type=OpportunityType.POSITION_RECOVERY,
-        signal_types=["position_decline"],
+        signal_types=[SignalType.POSITION_DECLINE.value],  # <-- اصلاح شد
     )
 
     strategy = build_strategy(
@@ -90,21 +88,18 @@ def test_position_recovery_maps_to_internal_linking():
     )
 
     assert strategy is not None
-    assert (
-        strategy.strategy_type
-        == StrategyType.INTERNAL_LINKING
-    )
+    assert strategy.strategy_type == StrategyType.INTERNAL_LINKING
 
 
 def test_volatile_position_recovery_prefers_monitoring():
     opportunity = make_opportunity(
         opportunity_type=OpportunityType.POSITION_RECOVERY,
         signal_types=[
-            "position_decline",
-            "position_decline_under_volatility",
+            SignalType.POSITION_DECLINE.value,
+            SignalType.POSITION_DECLINE_UNDER_VOLATILITY.value,  # <-- اصلاح شد
         ],
         risk_types=[
-            "position_decline_under_volatility",
+            SignalType.POSITION_DECLINE_UNDER_VOLATILITY.value,  # <-- اصلاح شد
         ],
     )
 
@@ -120,7 +115,7 @@ def test_volatile_position_recovery_prefers_monitoring():
 def test_strategy_is_deterministic():
     opportunity = make_opportunity(
         opportunity_type=OpportunityType.CTR_RECOVERY,
-        signal_types=["ctr_drop"],
+        signal_types=[SignalType.CTR_DROP.value],
     )
 
     first = build_strategy(
@@ -139,7 +134,7 @@ def test_strategy_is_deterministic():
 def test_unqualified_opportunity_produces_no_strategy():
     opportunity = make_opportunity(
         opportunity_type=OpportunityType.CTR_RECOVERY,
-        signal_types=["ctr_drop"],
+        signal_types=[SignalType.CTR_DROP.value],
     ).model_copy(
         update={
             "status": OpportunityStatus.REJECTED,
@@ -157,7 +152,7 @@ def test_unqualified_opportunity_produces_no_strategy():
 def test_strategy_preserves_snapshot():
     opportunity = make_opportunity(
         opportunity_type=OpportunityType.CTR_RECOVERY,
-        signal_types=["ctr_drop"],
+        signal_types=[SignalType.CTR_DROP.value],
     )
 
     strategy = build_strategy(

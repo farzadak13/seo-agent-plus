@@ -1,3 +1,4 @@
+
 from collections.abc import Sequence
 
 from app.models.candidates import Candidate, CandidateStatus
@@ -63,3 +64,4 @@ def build_investigation_queue(
         queue.append(candidate)
 
     return queue
+

@@ -1,6 +1,6 @@
 from app.models.reasoning import TitleReasoningInput
 from app.models.llm import LLMMessage
-
+PROMPT_VERSION = "title-reasoning-v1"
 
 SYSTEM_PROMPT = """
 You are a strategic SEO reasoning component.

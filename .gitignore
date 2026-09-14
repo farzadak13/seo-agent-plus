@@ -28,3 +28,7 @@ dist/
 # OS
 .DS_Store
 Thumbs.db
+stage*_backup_*/
+all_project_code.txt
+all_test_code.txt
+*.patch

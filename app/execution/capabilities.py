@@ -1,3 +1,4 @@
+
 from app.models.actions import ActionType
 from app.models.execution import ExecutionCapability
 
@@ -36,3 +37,4 @@ def required_capabilities_for_action(
             f"No execution capabilities defined for action: "
             f"{action_type.value}"
         ) from exc
+

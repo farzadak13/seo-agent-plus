@@ -1,3 +1,4 @@
+
 from app.models.features import FeatureSet
 from app.models.signals import Signal, SignalSeverity, SignalType
 
@@ -104,3 +105,4 @@ def detect_ctr_drop(
             "reason": "meaningful_ctr_drop",
         },
     )
+

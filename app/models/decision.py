@@ -1,9 +1,11 @@
+
 from pydantic import BaseModel, ConfigDict
 
 from app.models.actions import Action
 from app.models.candidates import Candidate
 from app.models.classification import ClassificationResult
 from app.models.features import FeatureSet
+from app.models.learning import LearningContext
 from app.models.opportunities import Opportunity
 from app.models.signals import Signal
 from app.models.strategies import Strategy
@@ -22,3 +24,5 @@ class DecisionEngineResult(BaseModel):
     action: Action | None = None
 
     investigation_queue: list[Candidate]
+    learning_context: LearningContext | None = None
+

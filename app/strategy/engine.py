@@ -8,7 +8,7 @@ from app.models.strategies import (
     StrategyStatus,
     StrategyType,
 )
-
+from app.models.signals import SignalType
 
 def _contains_signal(
     opportunity: Opportunity,
@@ -26,7 +26,7 @@ def _recommend_strategy_type(
     if opportunity.opportunity_type == OpportunityType.POSITION_RECOVERY:
         if _contains_signal(
             opportunity,
-            "position_decline_under_volatility",
+            SignalType.POSITION_DECLINE_UNDER_VOLATILITY.value,
         ):
             return StrategyType.MONITOR_ONLY
 
@@ -35,7 +35,7 @@ def _recommend_strategy_type(
     if opportunity.opportunity_type == OpportunityType.MIXED_RECOVERY:
         if _contains_signal(
             opportunity,
-            "position_decline_under_volatility",
+            SignalType.POSITION_DECLINE_UNDER_VOLATILITY.value,
         ):
             return StrategyType.CANNIBALIZATION_INVESTIGATION
 

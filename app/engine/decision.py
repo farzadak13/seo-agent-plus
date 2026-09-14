@@ -1,3 +1,4 @@
+
 from app.action.planner import build_action
 from app.classifier.candidate_builder import build_candidate
 from app.classifier.queue import build_investigation_queue
@@ -15,10 +16,12 @@ from app.features.reconciliation import (
 )
 from app.models.decision import DecisionEngineResult
 from app.models.evidence import DecisionEvidence
+from app.models.learning import LearningContext
 from app.models.opportunities import Opportunity
 from app.models.strategies import Strategy
 from app.opportunity.engine import build_opportunity
 from app.strategy.engine import build_strategy
+from app.learning.decision import apply_learning_to_strategy
 
 
 def _detect_all_signals(features):
@@ -41,6 +44,7 @@ def run_decision_engine(
     *,
     evidence: DecisionEvidence,
     candidate_id: str,
+    learning_context: LearningContext | None = None,
 ) -> DecisionEngineResult:
     current_window_completeness = calculate_window_completeness(
         evidence.current_daily_status,
@@ -83,6 +87,7 @@ def run_decision_engine(
             strategy=None,
             action=None,
             investigation_queue=[],
+            learning_context=learning_context,
         )
 
     signals = _detect_all_signals(
@@ -127,6 +132,12 @@ def run_decision_engine(
         else None
     )
 
+    if strategy is not None:
+        strategy = apply_learning_to_strategy(
+            strategy=strategy,
+            context=learning_context,
+        )
+
     action = (
         build_action(
             action_id=f"action-{candidate_id}",
@@ -149,4 +160,6 @@ def run_decision_engine(
         strategy=strategy,
         action=action,
         investigation_queue=investigation_queue,
+        learning_context=learning_context,
     )
+

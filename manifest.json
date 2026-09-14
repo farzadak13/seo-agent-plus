@@ -1,0 +1,67 @@
+[
+  {
+    "path": "app/api/app.py",
+    "baseline_sha256": "ba2d4ddfbeaf9833ef5ba3c7cfbae89191cb9884576a3f73a13be318a1c1c23c",
+    "updated_sha256": "be899a00dc38df10f0410a1e7190d7f850d88ed78041e338e21d7ac6a994337f"
+  },
+  {
+    "path": "app/normalization/gsc.py",
+    "baseline_sha256": "19eaae367eac0d618bb7369b1e5be586bf9806aeaf37e95d2d0bd1019551a34b",
+    "updated_sha256": "0e4de6f26b3df0e7a5cdfd40fa0b3947c8d496511a675ffee3fc6fb91a66e2d8"
+  },
+  {
+    "path": "app/persistence/postgres.py",
+    "baseline_sha256": "af57b45f90cd59bace9c68e8ebb2e5534a093a9fd588d35915e6bf5ddefef695",
+    "updated_sha256": "0039a26817f67ddbd98a6ee5278cf6e581b2ba784fc4072c29c25201bbc8dab1"
+  },
+  {
+    "path": "app/runtime/adapters.py",
+    "baseline_sha256": null,
+    "updated_sha256": "7fc034fd0c4f64d3f123d2bd08fa1070693fa2e8c6b237e2993b37616db68de8"
+  },
+  {
+    "path": "app/runtime/config.py",
+    "baseline_sha256": "243a7f6fd0646e8b9a380058af0f78221fb9a388a4e9ea56aea992e1ce60b924",
+    "updated_sha256": "99329d9e89cea5e31a4d050e76576e1f02d73224655e62e87c5a743034fd77b0"
+  },
+  {
+    "path": "app/runtime/container.py",
+    "baseline_sha256": "0caa5c6aaf33aeba0ddaa2ca8f627dc75af1c1aae8e7765e3ee1b8e9997fa16d",
+    "updated_sha256": "15631a9f616d35436d7e0724da6d19ce9dd242aacfc9f842f7ffef8ccf72b6ab"
+  },
+  {
+    "path": "app/runtime/gsc.py",
+    "baseline_sha256": null,
+    "updated_sha256": "259c86126193f60ba06dc272302cc18d227b55af20bc392d6dcce4167963b274"
+  },
+  {
+    "path": "app/runtime/lease.py",
+    "baseline_sha256": null,
+    "updated_sha256": "dc81770d298af05068b3ca81025065a0f46cc4fddd0efaf25f5a2914ca1348bd"
+  },
+  {
+    "path": "app/runtime/service.py",
+    "baseline_sha256": null,
+    "updated_sha256": "3f70f989f5bbc8de9cdfa418253b8ebabeaea58f2f9c4cef88546ba181aaca27"
+  },
+  {
+    "path": "app/runtime/worker.py",
+    "baseline_sha256": "bb98e65e08a07b857cef340662a71d56240b3830e812c1af158fd863ca0176a3",
+    "updated_sha256": "4db75070b349445cff1886686a7093ecb8eca69aa0ac4b39e1392fd3e3f55f78"
+  },
+  {
+    "path": "app/site_adapters/wordpress.py",
+    "baseline_sha256": "16ad2f512163caff5942f531ffdc9b8845d2d29c87af68b7a75725d45d47ad55",
+    "updated_sha256": "12fdcc45addd58278191e1aeae060afe5f27b907b27905824ce86f1cf81dd41e"
+  },
+  {
+    "path": "tests/unit/test_stage33_runtime.py",
+    "baseline_sha256": "606968e9487d28b6941bee80f881762dfbda82dc90140bd2925ae6fd92a79249",
+    "updated_sha256": "0da7141f298affc40daae08d6ff5e0a69d1f301176b56388af3a59b7d7d9fb29"
+  },
+  {
+    "path": "tests/unit/test_stage34_live_wiring.py",
+    "baseline_sha256": null,
+    "updated_sha256": "74bd3f5da55686a848e23203fee2056a076fbc5af341adf6f79336e6a0efc359"
+  }
+]

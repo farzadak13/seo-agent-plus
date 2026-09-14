@@ -1,3 +1,4 @@
+
 from app.models.features import FeatureSet
 from app.models.signals import Signal, SignalSeverity, SignalType
 
@@ -123,3 +124,4 @@ def detect_high_value_opportunity(
             "ctr_decline_support": ctr_decline_support,
         },
     )
+

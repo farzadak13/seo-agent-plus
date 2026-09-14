@@ -2,8 +2,8 @@ import json
 from urllib import error, request
 
 from app.models.llm import (
-    LLMMessage,
     LLMFailureType,
+    LLMMessage,
 )
 from app.models.provider_config import (
     ArvanAIProviderConfig,
@@ -43,6 +43,9 @@ class ArvanTransport:
                 f"{endpoint}/chat/completions"
             )
 
+        self._last_usage: dict = {}
+        self._last_response_metadata: dict = {}
+
     @property
     def provider_id(self) -> str:
         return "arvan_aiaas"
@@ -51,11 +54,24 @@ class ArvanTransport:
     def model(self) -> str:
         return self._config.model
 
+    @property
+    def last_usage(self) -> dict:
+        return dict(self._last_usage)
+
+    @property
+    def last_response_metadata(self) -> dict:
+        return dict(
+            self._last_response_metadata
+        )
+
     def complete(
         self,
         *,
         messages: list[LLMMessage],
     ) -> str:
+        self._last_usage = {}
+        self._last_response_metadata = {}
+
         payload = {
             "model": self._config.model,
             "messages": [
@@ -123,7 +139,8 @@ class ArvanTransport:
                     LLMFailureType.TRANSPORT
                 ),
                 message=(
-                    f"Arvan AIaaS HTTP error: {exc.code}"
+                    f"Arvan AIaaS HTTP error: "
+                    f"{exc.code}"
                 ),
                 retryable=exc.code >= 500,
             ) from exc
@@ -179,6 +196,33 @@ class ArvanTransport:
                 retryable=False,
             ) from exc
 
+        if not isinstance(
+            response_payload,
+            dict,
+        ):
+            raise ArvanTransportError(
+                failure_type=(
+                    LLMFailureType.INVALID_JSON
+                ),
+                message=(
+                    "Arvan AIaaS response root "
+                    "must be a JSON object."
+                ),
+                retryable=False,
+            )
+
+        usage = response_payload.get(
+            "usage"
+        )
+
+        if isinstance(
+            usage,
+            dict,
+        ):
+            self._last_usage = dict(usage)
+        else:
+            self._last_usage = {}
+
         choices = response_payload.get(
             "choices"
         )
@@ -187,12 +231,20 @@ class ArvanTransport:
             choices,
             list,
         ) or not choices:
+            self._last_response_metadata = {
+                "id": response_payload.get("id"),
+                "model": response_payload.get("model"),
+                "object": response_payload.get("object"),
+                "finish_reason": None,
+            }
+
             raise ArvanTransportError(
                 failure_type=(
                     LLMFailureType.INVALID_JSON
                 ),
                 message=(
-                    "Arvan AIaaS response has no choices."
+                    "Arvan AIaaS response "
+                    "has no choices."
                 ),
                 retryable=False,
             )
@@ -212,6 +264,17 @@ class ArvanTransport:
                 ),
                 retryable=False,
             )
+
+        finish_reason = first_choice.get(
+            "finish_reason"
+        )
+
+        self._last_response_metadata = {
+            "id": response_payload.get("id"),
+            "model": response_payload.get("model"),
+            "object": response_payload.get("object"),
+            "finish_reason": finish_reason,
+        }
 
         message = first_choice.get(
             "message"
@@ -247,6 +310,17 @@ class ArvanTransport:
                 message=(
                     "Arvan AIaaS message content "
                     "is missing or invalid."
+                ),
+                retryable=False,
+            )
+
+        if not content.strip():
+            raise ArvanTransportError(
+                failure_type=(
+                    LLMFailureType.EMPTY_OUTPUT
+                ),
+                message=(
+                    "Arvan AIaaS returned empty content."
                 ),
                 retryable=False,
             )

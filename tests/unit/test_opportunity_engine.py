@@ -1,5 +1,5 @@
 from datetime import date, datetime, timezone
-
+from app.models.opportunities import OpportunityType
 from app.engine.decision import run_decision_engine
 from app.models.evidence import DecisionEvidence
 from app.models.observations import (
@@ -138,7 +138,9 @@ def test_decision_engine_produces_opportunity():
     )
     assert 0 <= result.opportunity.priority_score <= 1
     assert result.opportunity.signal_types
-
+    
+    # اطمینان از اینکه سیگنال‌ها به درستی نوع فرصت را تشخیص داده‌اند
+    assert result.opportunity.opportunity_type == OpportunityType.MIXED_RECOVERY
 
 def test_opportunity_is_deterministic():
     evidence = make_evidence()
@@ -220,3 +222,47 @@ def test_opportunity_snapshot_matches_evidence():
         result.opportunity.snapshot
         == make_snapshot()
     )
+
+def test_decision_engine_produces_ctr_recovery_only():
+    # سناریو: رتبه ثابت است (4.0)، اما کلیک‌ها نصف شده‌اند (افت CTR خالص)
+    evidence = make_evidence()
+    evidence.current_observations[0].avg_position = 4.0
+    evidence.current_observations[0].clicks = 60
+    
+    result = run_decision_engine(
+        evidence=evidence,
+        candidate_id="candidate-ctr-only",
+    )
+    
+    assert result.opportunity is not None
+    assert result.opportunity.opportunity_type == OpportunityType.CTR_RECOVERY
+
+
+def test_decision_engine_produces_position_recovery_only():
+    # سناریو: کلیک و ایمپرشن افت نکرده (CTR ثابت است)، اما رتبه افت کرده (از 4 به 7)
+    evidence = make_evidence()
+    evidence.current_observations[0].clicks = 120
+    evidence.current_observations[0].avg_position = 7.0
+    
+    result = run_decision_engine(
+        evidence=evidence,
+        candidate_id="candidate-pos-only",
+    )
+    
+    assert result.opportunity is not None
+    assert result.opportunity.opportunity_type == OpportunityType.POSITION_RECOVERY
+
+
+def test_decision_engine_produces_visibility_growth():
+    # سناریو: رتبه و CTR هر دو ثابت و خوب هستند، اما پتانسیل رشد وجود دارد (High Value)
+    evidence = make_evidence()
+    evidence.current_observations[0].avg_position = 4.0
+    evidence.current_observations[0].clicks = 120
+    
+    result = run_decision_engine(
+        evidence=evidence,
+        candidate_id="candidate-growth-only",
+    )
+    
+    assert result.opportunity is not None
+    assert result.opportunity.opportunity_type == OpportunityType.VISIBILITY_GROWTH

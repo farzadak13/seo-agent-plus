@@ -1,3 +1,4 @@
+
 from collections.abc import Sequence
 
 from app.features.data_quality_gate import passes_data_quality_gate
@@ -130,3 +131,4 @@ def classify_signals(
         signal_count=len(detected_signals),
         risk_count=len(risks),
     )
+

@@ -1,6 +1,8 @@
 from collections.abc import Iterable, Sequence
 from datetime import date as Date
 
+from app.observability.lifecycle import observe
+from app.models.observability import ObservabilityEventType
 from app.engine.decision import run_decision_engine
 from app.ingestion.gsc import ingest_gsc_response
 from app.ingestion.reconciliation import reconcile_ingestion
@@ -9,6 +11,7 @@ from app.models.classification import (
     ClassificationStatus,
 )
 from app.models.evidence import DecisionEvidence
+from app.models.learning import LearningContext
 from app.models.observations import DataStatus, DailyObservation
 from app.models.pipeline import (
     DecisionPipelineResult,
@@ -61,6 +64,7 @@ def _build_decision_evidence(
     )
 
 
+@observe(ObservabilityEventType.PIPELINE, "pipeline.execute")
 def run_decision_pipeline(
     *,
     response: RawGSCResponse,
@@ -74,6 +78,7 @@ def run_decision_pipeline(
     normalized_query: str,
     expected_zero_dates: Iterable[Date] | None = None,
     current_url_metrics: Sequence[URLDailyMetric] | None = None,
+    learning_context: LearningContext | None = None,
 ) -> DecisionPipelineResult:
     ingestion = ingest_gsc_response(
         response=response,
@@ -109,6 +114,7 @@ def run_decision_pipeline(
             strategy=None,
             action=None,
             investigation_queue=[],
+            learning_context=learning_context,
         )
 
     baseline_daily_status = [
@@ -140,6 +146,7 @@ def run_decision_pipeline(
     decision = run_decision_engine(
         evidence=evidence,
         candidate_id=candidate_id,
+        learning_context=learning_context,
     )
 
     if decision.candidate is None:
@@ -156,6 +163,7 @@ def run_decision_pipeline(
             strategy=None,
             action=None,
             investigation_queue=[],
+            learning_context=learning_context,
         )
 
     return DecisionPipelineResult(
@@ -171,4 +179,7 @@ def run_decision_pipeline(
         strategy=decision.strategy,
         action=decision.action,
         investigation_queue=decision.investigation_queue,
+        learning_context=decision.learning_context,
     )
+
+

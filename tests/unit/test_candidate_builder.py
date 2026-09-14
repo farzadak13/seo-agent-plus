@@ -132,7 +132,11 @@ def test_build_candidate():
         classification=classification,
         snapshot=snapshot,
     )
-
+    assert candidate.signal_types == [
+        SignalType.HIGH_VALUE_OPPORTUNITY.value,
+        SignalType.POSITION_DECLINE.value,
+    ]
+    assert candidate.risk_types == []
     assert candidate.site_id == "site-1"
     assert candidate.normalized_url == "https://example.com/page"
     assert candidate.normalized_query == "کفش مردانه"
@@ -210,7 +214,15 @@ def test_risk_signal_is_recorded_separately():
     assert candidate.risk_types == [
         "CTR_DROP_UNDER_VOLATILITY",
     ]
+    assert candidate.signal_types == [
+        SignalType.CTR_DROP.value,
+        SignalType.VOLATILITY.value,
+        SignalType.CTR_DROP_UNDER_VOLATILITY.value,
+    ]
 
+    assert candidate.risk_types == [
+        SignalType.CTR_DROP_UNDER_VOLATILITY.value,
+    ]
     assert candidate.confidence == pytest.approx(0.72)
 
     assert candidate.snapshot.snapshot_id == "snapshot-002"

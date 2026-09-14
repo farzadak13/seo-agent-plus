@@ -1,0 +1,11 @@
+﻿{
+    "temperature":  0.2,
+    "messages":  [
+                     {
+                         "content":  "سلام",
+                         "role":  "user"
+                     }
+                 ],
+    "model":  "Gemini-2.5-Flash-lite",
+    "max_tokens":  20
+}

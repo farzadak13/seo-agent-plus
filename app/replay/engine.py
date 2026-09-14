@@ -1,9 +1,11 @@
+
 from app.engine.decision import run_decision_engine
 from app.models.classification import (
     ClassificationResult,
     ClassificationStatus,
 )
 from app.models.pipeline import PipelineStatus
+from app.models.learning import LearningContext
 from app.models.replay import ReplayEvidence, ReplayResult
 
 
@@ -24,6 +26,7 @@ def replay(
     *,
     evidence: ReplayEvidence,
     candidate_id: str,
+    learning_context: LearningContext | None = None,
 ) -> ReplayResult:
     """
     Replay the deterministic decision engine from persisted evidence.
@@ -45,11 +48,13 @@ def replay(
             opportunity=None,
             strategy=None,
             action=None,
+            learning_context=learning_context,
         )
 
     decision = run_decision_engine(
         evidence=evidence,
         candidate_id=candidate_id,
+        learning_context=learning_context,
     )
 
     if decision.candidate is None:
@@ -62,6 +67,7 @@ def replay(
             opportunity=None,
             strategy=None,
             action=None,
+            learning_context=learning_context,
         )
 
     return ReplayResult(
@@ -73,4 +79,6 @@ def replay(
         opportunity=decision.opportunity,
         strategy=decision.strategy,
         action=decision.action,
+        learning_context=decision.learning_context,
     )
+

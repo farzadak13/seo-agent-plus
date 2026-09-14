@@ -1,3 +1,4 @@
+
 from app.models.actions import Action
 from app.models.execution import (
     ExecutionRequest,
@@ -37,3 +38,4 @@ def build_execution_request(
         parameters=dict(action.parameters),
         idempotency_key=resolved_idempotency_key,
     )
+

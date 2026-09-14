@@ -1,3 +1,4 @@
+
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
@@ -9,6 +10,7 @@ from app.models.evidence import DecisionEvidence
 from app.models.features import FeatureSet
 from app.models.gsc import RawGSCResponse
 from app.models.ingestion import GSCIngestionResult
+from app.models.learning import LearningContext
 from app.models.opportunities import Opportunity
 from app.models.reconciliation import ReconciliationResult
 from app.models.signals import Signal
@@ -42,3 +44,5 @@ class DecisionPipelineResult(BaseModel):
     action: Action | None = None
 
     investigation_queue: list[Candidate]
+    learning_context: LearningContext | None = None
+

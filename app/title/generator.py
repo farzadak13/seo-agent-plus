@@ -6,7 +6,9 @@ from app.models.reasoning import (
 from app.models.title_recommendation import (
     TitleRecommendation,
 )
-from app.reasoning.contracts import StrategicReasoner
+from app.reasoning.contracts import (
+    StrategicReasoner,
+)
 from app.reasoning.validator import (
     validate_title_candidate,
 )
@@ -60,6 +62,7 @@ def generate_title_reasoning(
             status=ReasoningStatus.REJECTED,
             candidates=[],
             selected_candidate_id=None,
+            provider_id=reasoner.provider_id,
             reasons=[
                 "all_llm_candidates_failed_validation",
             ],
@@ -75,9 +78,6 @@ def generate_title_reasoning(
             snapshot=recommendation.snapshot,
         )
 
-    # Deterministic selection:
-    # highest confidence first, then original
-    # provider order is preserved for ties.
     selected = max(
         enumerate(accepted_candidates),
         key=lambda item: (
@@ -95,6 +95,7 @@ def generate_title_reasoning(
         selected_candidate_id=(
             selected.candidate_id
         ),
+        provider_id=reasoner.provider_id,
         reasons=[
             "validated_strategic_reasoning_candidates",
         ],

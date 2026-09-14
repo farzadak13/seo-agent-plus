@@ -8,6 +8,13 @@ from app.models.llm import (
 from app.models.reasoning import (
     TitleReasoningInput,
 )
+from app.models.llm_attempt import (
+    LLMAttemptStatus,
+)
+from app.reasoning.attempt_telemetry import (
+    AttemptTelemetryRecorder,
+)
+
 from app.models.snapshots import SnapshotMetadata
 from app.reasoning.provider import (
     ReasoningProviderError,
@@ -390,3 +397,165 @@ def test_provider_is_deterministic_for_same_output():
         candidate.model_dump()
         for candidate in second
     ]
+
+
+
+def test_arvan_failure_metadata_is_preserved_as_reasoning_failure(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.reasoning.provider.time.sleep",
+        lambda _: None,
+    )
+
+    from app.reasoning.arvan_transport import (
+        ArvanTransportError,
+    )
+
+    attempt_recorder = AttemptTelemetryRecorder(
+        attempt_id_factory=lambda:
+        "attempt-auth",
+    )
+
+    class FailingTransport(FakeTransport):
+        @property
+        def provider_id(self):
+            return "fake-provider"
+
+        def complete(self, *, messages):
+            self.calls += 1
+            raise ArvanTransportError(
+                failure_type=LLMFailureType.AUTHENTICATION,
+                message="auth failed",
+                retryable=False,
+            )
+
+    transport = FailingTransport([])
+
+    reasoner = StructuredTitleReasoner(
+        transport=transport,
+        max_retries=3,
+        attempt_telemetry=attempt_recorder,
+    )
+
+    with pytest.raises(
+        ReasoningProviderError
+    ) as exc_info:
+        reasoner.generate_title_candidates(
+            make_input()
+        )
+
+    assert (
+        exc_info.value.failure_type
+        == LLMFailureType.AUTHENTICATION
+    )
+    assert exc_info.value.retryable is False
+    assert transport.calls == 1
+
+    assert len(attempt_recorder.events) == 1
+
+    event = attempt_recorder.events[0]
+
+    assert event.failure_type == (
+        LLMFailureType.AUTHENTICATION
+    )
+    assert event.status == (
+        LLMAttemptStatus.FAILED
+    )
+
+
+def test_router_context_can_supply_attempt_recorder(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.reasoning.provider.time.sleep",
+        lambda _: None,
+    )
+
+    attempt_recorder = AttemptTelemetryRecorder(
+        attempt_id_factory=iter(
+            [
+                "attempt-context-1",
+                "attempt-context-2",
+            ]
+        ).__next__
+    )
+
+    class FailingThenSuccessTransport:
+        def __init__(self):
+            self.calls = 0
+            self._last_usage = {}
+            self._last_response_metadata = {}
+
+        @property
+        def provider_id(self):
+            return "context-provider"
+
+        @property
+        def model(self):
+            return "context-model"
+
+        @property
+        def last_usage(self):
+            return dict(self._last_usage)
+
+        @property
+        def last_response_metadata(self):
+            return dict(
+                self._last_response_metadata
+            )
+
+        def complete(self, *, messages):
+            self.calls += 1
+
+            if self.calls == 1:
+                raise TimeoutError()
+
+            self._last_usage = {
+                "prompt_tokens": 20,
+                "completion_tokens": 10,
+                "total_tokens": 30,
+            }
+
+            self._last_response_metadata = {
+                "finish_reason": "stop",
+            }
+
+            return '{"candidates":[]}'
+
+    from app.reasoning.context import (
+        ReasoningExecutionContext,
+    )
+
+    transport = FailingThenSuccessTransport()
+    reasoner = StructuredTitleReasoner(
+        transport=transport,
+        max_retries=1,
+    )
+
+    context = ReasoningExecutionContext(
+        logical_call_id="context-call",
+        attempt_telemetry=attempt_recorder,
+    )
+    context.select_provider(
+        "context-provider"
+    )
+
+    reasoner.set_execution_context(context)
+
+    result = reasoner.generate_title_candidates(
+        make_input()
+    )
+
+    assert result == []
+    assert len(attempt_recorder.events) == 2
+    assert [
+        event.attempt_number
+        for event in attempt_recorder.events
+    ] == [1, 2]
+    assert all(
+        event.logical_call_id
+        == "context-call"
+        for event in attempt_recorder.events
+    )
+    assert attempt_recorder.events[1].total_tokens == 30

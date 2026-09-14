@@ -5,9 +5,19 @@ from app.models.execution import (
     ExecutionRequest,
     ExecutionResolution,
 )
+from app.execution.capabilities import (
+    required_capabilities_for_action,
+)
 
 
 class ExecutionAdapter(Protocol):
+    """
+    Lightweight discovery contract.
+
+    Concrete SiteAdapter implementations satisfy this protocol
+    structurally through adapter_id and capabilities.
+    """
+
     @property
     def adapter_id(self) -> str:
         ...

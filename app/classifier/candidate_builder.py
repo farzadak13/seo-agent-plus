@@ -1,3 +1,4 @@
+
 from collections.abc import Sequence
 
 from app.models.candidates import Candidate, CandidateStatus
@@ -90,3 +91,4 @@ def _calculate_priority_score(
         * signal_factor
         * confidence
     )
+

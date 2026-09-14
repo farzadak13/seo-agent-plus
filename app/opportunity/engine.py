@@ -7,6 +7,7 @@ from app.models.opportunities import (
 )
 from app.models.signals import Signal
 from app.models.snapshots import SnapshotMetadata
+from app.models.signals import SignalType
 
 
 def _detected_signal_types(
@@ -32,9 +33,9 @@ def _risk_types(
 def _resolve_opportunity_type(
     signal_types: list[str],
 ) -> OpportunityType:
-    has_ctr = "ctr_drop" in signal_types
-    has_position = "position_decline" in signal_types
-    has_high_value = "high_value_opportunity" in signal_types
+    has_ctr = SignalType.CTR_DROP.value in signal_types
+    has_position = SignalType.POSITION_DECLINE.value in signal_types
+    has_high_value = SignalType.HIGH_VALUE_OPPORTUNITY.value in signal_types
 
     if has_ctr and has_position:
         return OpportunityType.MIXED_RECOVERY
