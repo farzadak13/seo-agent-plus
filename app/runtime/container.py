@@ -19,6 +19,7 @@ from app.runtime.worker import WorkerHandle
 from app.runtime.lease import postgres_worker_lease
 from app.runtime.service import PersistentSEORunService
 from app.runtime.adapters import SiteAdapterFactory
+from app.runtime.title import build_title_workflow
 
 
 @dataclass
@@ -33,6 +34,7 @@ class RuntimeContainer:
     observability: ObservabilityContext
     worker: WorkerHandle
     adapters: SiteAdapterFactory
+    title_workflow: object | None = None
 
     def start(self) -> None:
         if self.config.worker_enabled:
@@ -48,6 +50,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     site_store = SiteStore(repository)
     run_store = RunStore(repository)
 
+    secret_resolver = EnvironmentSecretResolver()
 
     observability = ObservabilityContext(
         event_sink=InMemoryEventSink(),
@@ -56,7 +59,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     )
 
     run_service = SEORunService(
-        secret_resolver=EnvironmentSecretResolver(),
+        secret_resolver=secret_resolver,
         gsc_gateway=StubGSCGateway(),
         baseline_provider=EmptyBaselineProvider(),
         pipeline_runner=DeterministicPipelineRunner(),
@@ -64,9 +67,19 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
 
     if config.gsc_mode == "live":
         run_service = PersistentSEORunService(
-            repository=repository, secret_resolver=EnvironmentSecretResolver(), settings=config,
+            repository=repository, secret_resolver=secret_resolver, settings=config,
         )
-    adapters = SiteAdapterFactory(EnvironmentSecretResolver())
+    adapters = SiteAdapterFactory(secret_resolver)
+
+    # Stage 36: the title path is wired here or not at all. An enabled workflow
+    # that cannot be built must fail startup rather than let runs report success
+    # while silently producing no proposal.
+    title_workflow = build_title_workflow(
+        config,
+        repository=repository,
+        adapter_factory=adapters,
+        secret_resolver=secret_resolver,
+    )
 
     handlers = JobHandlerRegistry()
     handlers.register(
@@ -75,6 +88,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             site_store=site_store,
             run_store=run_store,
             run_service=run_service,
+            title_workflow=title_workflow,
         ),
     )
 
@@ -99,6 +113,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         observability=observability,
         worker=worker,
         adapters=adapters,
+        title_workflow=title_workflow,
     )
 
 
@@ -139,6 +154,12 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             raise HTTPException(status_code=503, detail="Persistence unavailable.") from exc
         if resolved_config.worker_enabled and not container.worker.running:
             raise HTTPException(status_code=503, detail="Worker is not running.")
-        return {"status": "ready", "gsc_mode": resolved_config.gsc_mode}
+        return {
+            "status": "ready",
+            "gsc_mode": resolved_config.gsc_mode,
+            "title_workflow": "enabled" if container.title_workflow is not None else "disabled",
+            "serp_mode": resolved_config.serp_mode,
+            "llm_mode": resolved_config.llm_mode,
+        }
 
     return app
