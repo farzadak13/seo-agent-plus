@@ -149,7 +149,8 @@ def create_runtime_app(config: RuntimeConfig | None = None):
     def readiness():
         from fastapi import HTTPException
         try:
-            container.repository.list(limit=1)
+            # A liveness probe must not scan the record table; ping is O(1).
+            container.repository.ping()
         except Exception as exc:
             raise HTTPException(status_code=503, detail="Persistence unavailable.") from exc
         if resolved_config.worker_enabled and not container.worker.running:

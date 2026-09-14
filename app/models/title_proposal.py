@@ -23,6 +23,9 @@ class TitleProposal(BaseModel):
     proposal_id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)
 
+    # Owner scope. Optional so a proposal built outside a tenant context stays
+    # valid, but the composition root always supplies it from the site.
+    tenant_id: str | None = None
     site_id: str = Field(min_length=1)
     normalized_url: str = Field(min_length=1)
     primary_query: str = Field(min_length=1)

@@ -46,7 +46,7 @@ class TitleProposalStore:
     @staticmethod
     def _to_record(proposal: TitleProposal, *, version: int) -> PersistenceRecord:
         return build_record(
-            record_id=f"title-proposal:{proposal.proposal_id}",
+            record_id=f"title-proposal:{proposal.proposal_id}:v{version}",
             aggregate_type=TITLE_PROPOSAL_AGGREGATE_TYPE,
             aggregate_id=proposal.proposal_id,
             model=proposal,
@@ -93,8 +93,10 @@ class TitleRecommendationWorkflow:
         if strategy.strategy_type != StrategyType.SERP_TITLE_OPTIMIZATION:
             raise TitleWorkflowError("Title proposal requires SERP title optimization strategy.")
 
-        # Resolved once so every outcome branch persists under the same identity.
+        # Resolved once so every outcome branch persists under the same identity
+        # and the same owner.
         proposal_id = self._proposal_id(run_id)
+        tenant_id = getattr(site, "principal_id", None)
 
         adapter = self._adapter_resolver(site)
         page = adapter.read_page(
@@ -129,6 +131,7 @@ class TitleRecommendationWorkflow:
             proposal = TitleProposal(
                 proposal_id=proposal_id,
                 run_id=run_id,
+                tenant_id=tenant_id,
                 site_id=strategy.site_id,
                 normalized_url=strategy.normalized_url,
                 primary_query=strategy.normalized_query,
@@ -160,6 +163,7 @@ class TitleRecommendationWorkflow:
             proposal = TitleProposal(
                 proposal_id=proposal_id,
                 run_id=run_id,
+                tenant_id=tenant_id,
                 site_id=strategy.site_id,
                 normalized_url=strategy.normalized_url,
                 primary_query=strategy.normalized_query,
@@ -190,6 +194,7 @@ class TitleRecommendationWorkflow:
         proposal = TitleProposal(
             proposal_id=proposal_id,
             run_id=run_id,
+            tenant_id=tenant_id,
             site_id=strategy.site_id,
             normalized_url=strategy.normalized_url,
             primary_query=strategy.normalized_query,

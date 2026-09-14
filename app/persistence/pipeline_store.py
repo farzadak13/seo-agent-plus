@@ -99,8 +99,7 @@ class PipelinePersistenceStore:
             raw_gsc_record_id=raw_gsc_record_id,
             decision_record_id=decision_record_id,
             completed=True,
-        ).model_copy(
-            update={"version": 2}
+            version=current.version + 1,
         )
 
         self._repository.replace(
@@ -128,8 +127,7 @@ class PipelinePersistenceStore:
             site_id=site_id,
             snapshot=snapshot,
             error=error,
-        ).model_copy(
-            update={"version": current.version + 1}
+            version=current.version + 1,
         )
 
         self._repository.replace(

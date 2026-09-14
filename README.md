@@ -1,20 +1,42 @@
 # AI SEO Agent
 
-AI-powered SEO Operator for WordPress websites.
+A deterministic SEO decision engine: it observes Search Console data,
+diagnoses opportunities by rule, and only then asks a language model to write
+a title. The decision is explainable and replayable without the model.
 
-## Current Phase
+## Requirements
 
-Stage A — Deterministic SEO Decision Engine
+- Python 3.14
+- Docker (for the local PostgreSQL)
 
-## Current Goal
+## Getting started
 
-Detect SEO opportunities from Google Search Console data
-using deterministic rules before introducing LLM reasoning.
+```powershell
+docker compose up -d
+Copy-Item .env.example .env      # then set SEO_AGENT_API_KEY
+python -m app.migrate
+pytest -q -m "not integration"
+```
 
-## Development
+Full instructions, including how to load `.env` in PowerShell and how to run
+the live database tests, are in [docs/database.md](docs/database.md).
 
-Python 3.13
+## Layout
+
+| Path | What lives there |
+| --- | --- |
+| `app/models` | Domain models. No I/O. |
+| `app/detectors`, `app/classifier`, `app/engine`, `app/opportunity`, `app/strategy` | Deterministic decision path |
+| `app/serp`, `app/title`, `app/reasoning` | SERP evidence and title proposals |
+| `app/execution`, `app/site_adapters` | Applying changes to a site |
+| `app/measurement`, `app/outcome`, `app/learning` | Measuring what a change did |
+| `app/persistence` | Append-only versioned record store and migrations |
+| `app/runtime` | Composition root: config, container, worker |
+| `migrations` | Numbered SQL, applied by `python -m app.migrate` |
 
 ## Testing
 
-pytest
+```powershell
+pytest -q -m "not integration"   # no external services
+pytest -q -m integration         # needs SEO_AGENT_TEST_DSN and ARVAN_AI_ENDPOINT
+```

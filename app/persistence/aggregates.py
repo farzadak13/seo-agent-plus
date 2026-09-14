@@ -63,6 +63,7 @@ def build_run_record(
     decision_record_id: str | None = None,
     completed: bool = False,
     error: str | None = None,
+    version: int = 1,
 ) -> PersistenceRecord:
     from app.models.runs import PipelineRun, RunStatus
 
@@ -88,10 +89,13 @@ def build_run_record(
     )
 
     return PersistenceRecord(
-        record_id=f"pipeline-run:{run_id}",
+        # Version-qualified: migrations/001 declares UNIQUE (record_id), so a
+        # second version written under the first version's record_id is
+        # rejected by PostgreSQL.
+        record_id=f"pipeline-run:{run_id}:v{version}",
         aggregate_type="pipeline_run",
         aggregate_id=run_id,
-        version=1,
+        version=version,
         schema_version=1,
         payload=run.model_dump(mode="json"),
         **_snapshot_values(snapshot),

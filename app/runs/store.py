@@ -42,10 +42,12 @@ class RunStore:
     @staticmethod
     def _to_record(run: SEORun, *, version: int) -> PersistenceRecord:
         return PersistenceRecord(
-            record_id=f"run:{run.run_id}",
+            record_id=f"run:{run.run_id}:v{version}",
             aggregate_type=RUN_AGGREGATE_TYPE,
             aggregate_id=run.run_id,
             schema_version=RUN_SCHEMA_VERSION,
             version=version,
             payload=run.model_dump(mode="json"),
+            tenant_id=run.principal_id,
+            site_id=run.site_id,
         )

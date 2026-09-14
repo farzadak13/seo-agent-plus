@@ -50,10 +50,12 @@ class SiteStore:
     @staticmethod
     def _to_record(site: Site, *, version: int) -> PersistenceRecord:
         return PersistenceRecord(
-            record_id=f"site:{site.site_id}",
+            record_id=f"site:{site.site_id}:v{version}",
             aggregate_type=SITE_AGGREGATE_TYPE,
             aggregate_id=site.site_id,
             schema_version=SITE_SCHEMA_VERSION,
             version=version,
             payload=site.model_dump(mode="json"),
+            tenant_id=site.principal_id,
+            site_id=site.site_id,
         )

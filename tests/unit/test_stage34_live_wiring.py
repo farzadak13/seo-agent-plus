@@ -150,12 +150,30 @@ def test_wordpress_factory_uses_secrets_and_unique_identity(monkeypatch):
 
 
 def test_readiness_reports_database_failure(monkeypatch):
+    # Readiness probes with ping, not list: a health check must not scan the
+    # record table. The guarantee under test is unchanged -- an unreachable
+    # store answers 503 and never leaks the driver's message.
     client,runtime,_,_=setup_api(monkeypatch)
     assert client.get('/readyz').status_code==200
-    def fail(**kw):raise RuntimeError('private database error')
-    monkeypatch.setattr(runtime.repository,'list',fail)
+    def fail(*args,**kw):raise RuntimeError('private database error')
+    monkeypatch.setattr(runtime.repository,'ping',fail)
     assert client.get('/readyz').status_code==503
     assert 'private' not in client.get('/readyz').text
+
+
+def test_readiness_does_not_scan_the_record_table(monkeypatch):
+    client,runtime,_,_=setup_api(monkeypatch)
+    def forbidden(*args,**kw):raise AssertionError('readiness must not list records')
+    monkeypatch.setattr(runtime.repository,'list',forbidden)
+    assert client.get('/readyz').status_code==200
+
+
+def test_readiness_reports_the_title_path(monkeypatch):
+    client,_,_,_=setup_api(monkeypatch)
+    body=client.get('/readyz').json()
+    assert body['title_workflow']=='disabled'
+    assert body['serp_mode']=='none'
+    assert body['llm_mode']=='none'
 
 
 def test_postgres_lease_refuses_other_worker():

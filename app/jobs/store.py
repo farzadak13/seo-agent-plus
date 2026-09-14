@@ -99,12 +99,14 @@ class JobStore:
     @staticmethod
     def _to_record(job: Job, *, version: int) -> PersistenceRecord:
         return PersistenceRecord(
-            record_id=f"job:{job.job_id}",
+            record_id=f"job:{job.job_id}:v{version}",
             aggregate_type=JOB_AGGREGATE_TYPE,
             aggregate_id=job.job_id,
             schema_version=JOB_SCHEMA_VERSION,
             version=version,
             payload=job.model_dump(mode="json"),
+            tenant_id=job.principal_id,
+            site_id=job.payload.get("site_id"),
         )
 
     @staticmethod

@@ -20,3 +20,9 @@ class PersistenceRecord(BaseModel):
     data_snapshot_id: str | None = None
     rule_version: str | None = None
     config_version: str | None = None
+
+    # Owner scope. Denormalized out of the payload so records can be found by
+    # owner without scanning: a record with no tenant is never returned by a
+    # tenant-scoped query.
+    tenant_id: str | None = None
+    site_id: str | None = None

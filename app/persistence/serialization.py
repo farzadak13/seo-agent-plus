@@ -47,6 +47,8 @@ def build_record(
     data_snapshot_id: str | None = None,
     rule_version: str | None = None,
     config_version: str | None = None,
+    tenant_id: str | None = None,
+    site_id: str | None = None,
 ) -> PersistenceRecord:
     """Wrap a domain model in a persistence envelope."""
     resolved_snapshot_id = snapshot_id
@@ -61,6 +63,16 @@ def build_record(
         resolved_rule_version = resolved_rule_version or getattr(snapshot, "rule_version", None)
         resolved_config_version = resolved_config_version or getattr(snapshot, "config_version", None)
 
+    # Owner scope, lifted out of the payload so it can be indexed. principal_id
+    # is the fallback because today one API key means one account; when models
+    # carry an explicit tenant_id, that wins.
+    resolved_tenant_id = (
+        tenant_id
+        or getattr(model, "tenant_id", None)
+        or getattr(model, "principal_id", None)
+    )
+    resolved_site_id = site_id or getattr(model, "site_id", None)
+
     return PersistenceRecord(
         record_id=record_id,
         aggregate_type=aggregate_type,
@@ -72,6 +84,8 @@ def build_record(
         data_snapshot_id=resolved_data_snapshot_id,
         rule_version=resolved_rule_version,
         config_version=resolved_config_version,
+        tenant_id=resolved_tenant_id,
+        site_id=resolved_site_id,
     )
 
 
@@ -89,3 +103,4 @@ __all__ = [
     "restore_record",
     "serialize_model",
 ]
+

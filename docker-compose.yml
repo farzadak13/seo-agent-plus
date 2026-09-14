@@ -1,0 +1,38 @@
+# Local PostgreSQL for development and tests.
+#
+# Two databases, deliberately separate:
+#   seoagent       - development data, survives restarts
+#   seoagent_test  - integration tests DROP tables here, so it must never be
+#                    the same database as development
+#
+# The port is published on 55432, not 5432, so this container never collides
+# with a PostgreSQL already installed on the host. It is bound to 127.0.0.1 so
+# the container is not reachable from the network. The password below is a
+# local development credential only; a deployed database must take its password
+# from a secret, never from this file.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: seoagent-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: seoagent
+      POSTGRES_PASSWORD: seoagent_local_dev
+      POSTGRES_DB: seoagent
+      # Deterministic collation keeps ORDER BY on Persian text identical
+      # across machines.
+      LANG: C.UTF-8
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - seoagent-pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U seoagent -d seoagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  seoagent-pgdata:
