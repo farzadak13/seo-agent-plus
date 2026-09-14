@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from uuid import uuid4
 
 from app.execution.site_adapter import SiteAdapter
 from app.models.persistence import PersistenceRecord
@@ -74,13 +73,28 @@ class TitleRecommendationWorkflow:
         self._serp_provider = serp_provider
         self._reasoning_router = reasoning_router
         self._proposal_store = proposal_store
-        self._proposal_id_factory = proposal_id_factory or (lambda: str(uuid4()))
-        self._orchestration_id_factory = orchestration_id_factory or (lambda: str(uuid4()))
+        # No random default: identifiers are derived from the run so a replay of
+        # the same run addresses the same records instead of creating new ones.
+        self._proposal_id_factory = proposal_id_factory
+        self._orchestration_id_factory = orchestration_id_factory
         self._provider_ids = provider_ids
+
+    def _proposal_id(self, run_id: str) -> str:
+        if self._proposal_id_factory is not None:
+            return self._proposal_id_factory()
+        return f"proposal:{run_id}"
+
+    def _orchestration_id(self, run_id: str) -> str:
+        if self._orchestration_id_factory is not None:
+            return self._orchestration_id_factory()
+        return f"orchestration:{run_id}"
 
     def run(self, *, run_id: str, site: object, strategy: Strategy) -> TitleProposal:
         if strategy.strategy_type != StrategyType.SERP_TITLE_OPTIMIZATION:
             raise TitleWorkflowError("Title proposal requires SERP title optimization strategy.")
+
+        # Resolved once so every outcome branch persists under the same identity.
+        proposal_id = self._proposal_id(run_id)
 
         adapter = self._adapter_resolver(site)
         page = adapter.read_page(
@@ -113,7 +127,7 @@ class TitleRecommendationWorkflow:
 
         if decision.status != SERPDecisionStatus.PASS:
             proposal = TitleProposal(
-                proposal_id=self._proposal_id_factory(),
+                proposal_id=proposal_id,
                 run_id=run_id,
                 site_id=strategy.site_id,
                 normalized_url=strategy.normalized_url,
@@ -134,7 +148,7 @@ class TitleRecommendationWorkflow:
         from app.reasoning.orchestrator import run_title_reasoning_orchestration
 
         orchestration = run_title_reasoning_orchestration(
-            orchestration_id=self._orchestration_id_factory(),
+            orchestration_id=self._orchestration_id(run_id),
             investigation=investigation,
             decision=decision,
             recommendation=recommendation,
@@ -144,7 +158,7 @@ class TitleRecommendationWorkflow:
 
         if not orchestration.reasoning or not orchestration.reasoning.candidates:
             proposal = TitleProposal(
-                proposal_id=self._proposal_id_factory(),
+                proposal_id=proposal_id,
                 run_id=run_id,
                 site_id=strategy.site_id,
                 normalized_url=strategy.normalized_url,
@@ -174,7 +188,7 @@ class TitleRecommendationWorkflow:
             raise TitleWorkflowError("Reasoning selected candidate is not present in validated candidates.")
 
         proposal = TitleProposal(
-            proposal_id=self._proposal_id_factory(),
+            proposal_id=proposal_id,
             run_id=run_id,
             site_id=strategy.site_id,
             normalized_url=strategy.normalized_url,
