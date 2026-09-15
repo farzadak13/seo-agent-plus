@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>هوشیار سئو — دستیار تحلیل و بهبود سئو</title>
+<meta name="description" content="هوشیار سئو داده‌های Google Search Console را تحلیل می‌کند، فرصت‌های بهبود را پیدا می‌کند و برای هر پیشنهاد دلیل و شواهد ارائه می‌دهد.">
+<style>
+  :root {
+    --ink: #16181d;
+    --muted: #5b6270;
+    --line: #e3e6ec;
+    --bg: #ffffff;
+    --soft: #f7f8fa;
+    --accent: #1f5f4f;
+    --accent-soft: #eaf3f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e8eaee;
+      --muted: #9aa2b1;
+      --line: #2a2e37;
+      --bg: #14161a;
+      --soft: #1a1d22;
+      --accent: #7fc9b3;
+      --accent-soft: #1b2a26;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.85 Vazirmatn, "Segoe UI", Tahoma, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 20px; }
+  header {
+    border-bottom: 1px solid var(--line);
+    padding-block: 20px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 18px; letter-spacing: -0.2px;
+  }
+  .mark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center; font-size: 15px; font-weight: 800;
+  }
+  h1 {
+    font-size: clamp(27px, 5vw, 38px);
+    line-height: 1.45; letter-spacing: -0.4px;
+    margin: 56px 0 18px;
+  }
+  .lead { font-size: 18px; color: var(--muted); margin: 0 0 40px; }
+  h2 {
+    font-size: 19px; margin: 44px 0 14px;
+    letter-spacing: -0.2px;
+  }
+  p { margin: 0 0 16px; }
+  ul { margin: 0 0 16px; padding-right: 20px; }
+  li { margin-bottom: 10px; }
+  .steps { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+  .steps li {
+    position: relative; padding-right: 42px; margin-bottom: 20px;
+    counter-increment: step;
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute; right: 0; top: 3px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    display: grid; place-items: center;
+    font-size: 13px; font-weight: 700;
+  }
+  .note {
+    background: var(--soft); border: 1px solid var(--line);
+    border-radius: 12px; padding: 18px 20px; margin: 32px 0;
+    color: var(--muted); font-size: 15px;
+  }
+  .note strong { color: var(--ink); }
+  footer {
+    border-top: 1px solid var(--line);
+    margin-top: 64px; padding-block: 28px 44px;
+    color: var(--muted); font-size: 14px;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  .links { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="brand"><span class="mark">ه</span> هوشیار سئو</div>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>داده‌های سرچ کنسول را می‌خواند، فرصت‌ها را پیدا می‌کند، و دلیلش را می‌گوید</h1>
+  <p class="lead">
+    هوشیار سئو داده‌های عملکرد سایت شما در Google Search Console را تحلیل می‌کند،
+    صفحه‌ها و کلمات کلیدی‌ای را که جای رشد دارند مشخص می‌کند، و برای هر پیشنهاد
+    شواهدی ارائه می‌دهد که بتوانید خودتان بسنجید.
+  </p>
+
+  <h2>چطور کار می‌کند</h2>
+  <ol class="steps">
+    <li>سایتتان را با یک کلیک به Google Search Console وصل می‌کنید. دسترسی فقط خواندنی است.</li>
+    <li>داده‌های عملکرد خوانده می‌شود و تغییرات معنادار از نوسان روزمره جدا می‌شوند.</li>
+    <li>فرصت‌های بهبود با دلیل و شواهد به شما پیشنهاد می‌شود.</li>
+    <li>هیچ تغییری روی سایت شما بدون تأیید صریح خودتان اعمال نمی‌شود.</li>
+  </ol>
+
+  <h2>چه چیزی این را متفاوت می‌کند</h2>
+  <ul>
+    <li><strong>تصمیم‌ها قابل توضیح‌اند.</strong> هر پیشنهاد به داده‌ای که از آن آمده وصل است، نه یک خروجی مبهم.</li>
+    <li><strong>کمبود داده پنهان نمی‌شود.</strong> وقتی داده کافی نیست، به‌جای حدس زدن، همین را می‌گوید.</li>
+    <li><strong>کنترل دست شماست.</strong> هیچ اقدامی بدون تأیید شما انجام نمی‌شود و هر تغییر قابل بازگرداندن است.</li>
+  </ul>
+
+  <div class="note">
+    <strong>دربارهٔ دسترسی به حساب گوگل شما:</strong>
+    هوشیار سئو فقط دسترسی خواندنی به داده‌های عملکرد Search Console می‌گیرد.
+    نمی‌تواند تنظیمات سایت شما را تغییر دهد، کاربری اضافه یا حذف کند، یا به
+    ایمیل و سایر سرویس‌های گوگل شما دسترسی داشته باشد. هر زمان بخواهید می‌توانید
+    این دسترسی را لغو کنید.
+    جزئیات کامل در <a href="/privacy.html">سیاست حریم خصوصی</a>.
+  </div>
+
+  <h2>وضعیت فعلی</h2>
+  <p>
+    هوشیار سئو در مرحلهٔ توسعه است و هنوز برای ثبت‌نام عمومی باز نشده.
+    اگر مایلید در نسخهٔ اولیه شرکت کنید، با ایمیل زیر تماس بگیرید.
+  </p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="/privacy.html">سیاست حریم خصوصی</a>
+      <a href="mailto:info@hoshyarseo.ir">info@hoshyarseo.ir</a>
+    </div>
+    <div>© ۱۴۰۵ هوشیار سئو</div>
+  </div>
+</footer>
+
+</body>
+</html>
