@@ -42,10 +42,21 @@ class GSCClient:
         *,
         request_fn: Callable[..., Any],
         sleep_fn: Callable[[float], None] = time.sleep,
+        token_provider: Any = None,
     ) -> None:
         self.config = config
         self._request_fn = request_fn
         self._sleep = sleep_fn
+        # A provider mints and refreshes; config.oauth_access_token is a fixed
+        # string that expires in an hour and cannot renew itself.
+        self._token_provider = token_provider
+
+    def _authorization(self) -> str | None:
+        if self._token_provider is not None:
+            return self._token_provider.token()
+        if self.config.oauth_access_token:
+            return self.config.oauth_access_token
+        return None
 
     def query(
         self,
@@ -144,8 +155,9 @@ class GSCClient:
             "aggregationType": "auto",
         }
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
-        if self.config.oauth_access_token:
-            headers["Authorization"] = f"Bearer {self.config.oauth_access_token}"
+        token = self._authorization()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
         for attempt in range(self.config.max_retries + 1):
             try:
@@ -157,16 +169,22 @@ class GSCClient:
                     timeout=self.config.timeout_seconds,
                 )
                 status_code = getattr(response, "status_code", 200)
-                if status_code in {429, 500, 502, 503, 504}:
-                    raise GSCClientError(
-                        f"GSC transient HTTP error: {status_code}",
-                        retryable=True,
-                        status_code=status_code,
-                    )
                 if status_code >= 400:
+                    # A transport that kept the body can say whether a 403 is a
+                    # missing grant or an exhausted quota. Those need different
+                    # fixes and only one of them is worth retrying.
+                    classify = getattr(response, "classify", None)
+                    if callable(classify):
+                        kind = classify()
+                        detail = getattr(response, "diagnostic", lambda: f"HTTP {status_code}")()
+                        raise GSCClientError(
+                            f"GSC request failed: {detail}",
+                            retryable=kind.retryable,
+                            status_code=status_code,
+                        )
                     raise GSCClientError(
                         f"GSC HTTP error: {status_code}",
-                        retryable=False,
+                        retryable=status_code in {429, 500, 502, 503, 504},
                         status_code=status_code,
                     )
                 payload = response.json()
