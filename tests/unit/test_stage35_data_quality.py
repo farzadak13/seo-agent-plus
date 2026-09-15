@@ -188,7 +188,7 @@ def test_runtime_uses_independent_url_counts_not_query_sum(monkeypatch):
     client,runtime,site_id,_=setup_api(monkeypatch)
     import app.runtime.service as service_module
     factory=service_module.LiveGSCGateway
-    def independent_factory(site,timeout):
+    def independent_factory(site,timeout,request_fn=None):
         gateway=factory(site,timeout)
         request=gateway.request_fn
         def independent_request(*args,**kwargs):

@@ -8,7 +8,8 @@ from app.persistence.memory import InMemoryRepository
 from app.runtime.config import RuntimeConfig
 from app.runtime.container import create_runtime_app
 from app.runtime.worker import WorkerHandle
-from app.runtime.gsc import LiveGSCGateway, JSONResponse
+from app.gsc.transport import GoogleResponse
+from app.runtime.gsc import LiveGSCGateway
 from app.runtime.adapters import SiteAdapterFactory
 from app.models.sites import Site, SiteAdapterConnection, SecretRef, GSCConnectionConfig
 from app.runtime.lease import postgres_worker_lease
@@ -40,8 +41,9 @@ def setup_api(monkeypatch, missing_baseline=False):
                      dict(keys=['https://unrelated.com/page','other',day],impressions=9999.0,clicks=900.0,position=1.0)]
         if body['dimensions'] == ['page', 'date']:
             rows = [{**row, 'keys': [row['keys'][0], row['keys'][2]]} for row in rows]
-        return JSONResponse(200,json.dumps({'rows':rows}))
-    monkeypatch.setattr('app.runtime.service.LiveGSCGateway',lambda site,timeout:LiveGSCGateway(site,timeout=timeout,request_fn=request))
+        return GoogleResponse(200,json.dumps({'rows':rows}).encode(),{})
+    monkeypatch.setattr('app.runtime.service.LiveGSCGateway',
+        lambda site,timeout,request_fn=None:LiveGSCGateway(site,timeout=timeout,request_fn=request))
     app=create_runtime_app(RuntimeConfig(api_key='test-key',database_dsn='unused',gsc_mode='live',worker_enabled=False))
     client=TestClient(app);client.headers['Authorization']='Bearer test-key'
     response=client.post('/v1/sites',json={'name':'Example','base_url':'https://example.com'})
@@ -191,9 +193,29 @@ def test_postgres_lease_refuses_other_worker():
         with postgres_worker_lease(Repository()):raise AssertionError('must not enter')
 
 
-def test_unsupported_auth_mode_does_not_send_request():
+def test_an_unknown_auth_mode_does_not_send_request():
+    """A credential kind we cannot build must fail before the token is sent
+    anywhere, not after a request goes out with the wrong header."""
+    site=Site(site_id='s',principal_id='p',name='Example',base_url='https://example.com',
+        gsc=GSCConnectionConfig(property_url='https://example.com',credential_ref=SecretRef(key='TOKEN'),auth_mode='basic_auth'))
+    def fail(*a,**kw):raise AssertionError('network')
+    with pytest.raises(ValueError):
+        LiveGSCGateway(site,request_fn=fail).fetch(site_id='s',property_url='https://example.com',credential='x',start_date=date(2026,9,1),end_date=date(2026,9,1))
+
+
+def test_a_service_account_site_is_now_supported():
+    """It used to be rejected outright; the credential layer handles it now."""
     site=Site(site_id='s',principal_id='p',name='Example',base_url='https://example.com',
         gsc=GSCConnectionConfig(property_url='https://example.com',credential_ref=SecretRef(key='TOKEN'),auth_mode='service_account'))
-    def fail(*a,**kw):raise AssertionError('network')
-    with pytest.raises(ValueError,match='access_token'):
-        LiveGSCGateway(site,request_fn=fail).fetch(site_id='s',property_url='https://example.com',credential='x',start_date=date(2026,9,1),end_date=date(2026,9,1))
+    captured={}
+    def provider_factory(*,kind,secret,session):
+        captured['kind']=kind
+        return type('P',(),{'token':staticmethod(lambda:'minted')})()
+    def request(method,path,**kwargs):
+        captured['auth']=kwargs['headers'].get('Authorization')
+        return GoogleResponse(200,json.dumps({'rows':[]}).encode(),{})
+    LiveGSCGateway(site,request_fn=request,provider_factory=provider_factory).fetch(
+        site_id='s',property_url='https://example.com',credential='{}',
+        start_date=date(2026,9,1),end_date=date(2026,9,1))
+    assert captured['kind']=='service_account'
+    assert captured['auth']=='Bearer minted'

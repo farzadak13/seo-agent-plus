@@ -1,5 +1,5 @@
 """Bound per-run gateways prevent credentials and baselines leaking between sites."""
-from datetime import timedelta
+from datetime import date as Date, timedelta
 from hashlib import sha256
 import json
 
@@ -14,15 +14,38 @@ from app.runtime.data_quality import validate_final_response, validate_daily_tot
 from app.normalization.observation import rows_to_observations
 from app.pipeline.decision import run_decision_pipeline
 from app.persistence.contracts import PersistenceConflictError
-from app.runtime.gsc import LiveGSCGateway
+from app.ingestion.calendar import latest_final_date
+from app.runtime.gsc import LiveGSCGateway, build_google_transport
 
 
 class PersistentSEORunService:
-    def __init__(self, *, repository, secret_resolver, settings, gateway_factory=None):
+    def __init__(
+        self,
+        *,
+        repository,
+        secret_resolver,
+        settings,
+        gateway_factory=None,
+        transport=None,
+        today_fn=Date.today,
+    ):
         self.repository = repository
         self.secret_resolver = secret_resolver
         self.settings = settings
-        self.gateway_factory = gateway_factory or (lambda site: LiveGSCGateway(site, timeout=settings.gsc_timeout_seconds))
+        self.today_fn = today_fn
+        self._transport = transport
+        self.gateway_factory = gateway_factory or self._default_gateway
+
+    def _default_gateway(self, site):
+        # One transport for the whole runtime: one connection pool, and the
+        # proxy configured in exactly one place.
+        if self._transport is None:
+            self._transport = build_google_transport(self.settings)
+        return LiveGSCGateway(
+            site,
+            timeout=self.settings.gsc_timeout_seconds,
+            request_fn=self._transport,
+        )
 
     def _save_response(self, response):
         try:
@@ -44,6 +67,17 @@ class PersistentSEORunService:
         days = (end_date - start_date).days + 1
         if not 1 <= days <= self.settings.max_window_days:
             raise ValueError("Run date window is invalid or exceeds configured limit.")
+        # Search Console keeps revising recent days. A window that reaches into
+        # them reads as a traffic drop that never happened, and the engine
+        # recommends a fix for it. Refuse rather than decide on moving numbers.
+        newest_settled = latest_final_date(
+            self.today_fn(), lag_days=self.settings.gsc_data_lag_days
+        )
+        if end_date > newest_settled:
+            raise ValueError(
+                f"Search Console data through {end_date.isoformat()} has not settled; "
+                f"the newest usable day is {newest_settled.isoformat()}."
+            )
         url = canonicalize_url(normalized_url)
         query = normalize_query(normalized_query)
         if not query:

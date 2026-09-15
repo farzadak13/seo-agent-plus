@@ -3,6 +3,9 @@ from __future__ import annotations
 import os
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.gsc.transport import GOOGLE_API_BASE
+from app.ingestion.calendar import GSC_DATA_LAG_DAYS
+
 
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -16,6 +19,16 @@ class RuntimeConfig(BaseModel):
     observability_enabled: bool = True
     gsc_timeout_seconds: float = Field(default=30.0, gt=0)
     max_window_days: int = Field(default=90, ge=1, le=365)
+
+    # Egress — where Google calls go and through what. A proxy is a setting on
+    # one session rather than a second code path, so development from a place
+    # that cannot reach googleapis.com runs the same code as production.
+    google_api_base: str = Field(default=GOOGLE_API_BASE, min_length=1)
+    google_proxy_url: str | None = Field(default=None, repr=False)
+    google_verify_tls: bool = True
+
+    # How far back the newest usable day is. See app.ingestion.calendar.
+    gsc_data_lag_days: int = Field(default=GSC_DATA_LAG_DAYS, ge=0, le=10)
 
     # Stage 36 — title recommendation path.
     title_workflow_enabled: bool = False
@@ -34,6 +47,17 @@ class RuntimeConfig(BaseModel):
         if not value.strip() or value.strip() == "change-me":
             raise ValueError("A non-default API key is required.")
         return value
+
+    @model_validator(mode="after")
+    def egress_is_safe_for_the_environment(self):
+        """TLS verification is turned off to get through a local proxy, and
+        then nobody remembers to turn it back on. Production refuses."""
+        if self.environment.strip().lower() == "production" and not self.google_verify_tls:
+            raise ValueError(
+                "SEO_AGENT_GOOGLE_VERIFY_TLS must not be false in production: "
+                "an unverified proxy can read and rewrite the token traffic."
+            )
+        return self
 
     @model_validator(mode="after")
     def title_path_is_fully_configured(self):
@@ -90,6 +114,14 @@ class RuntimeConfig(BaseModel):
             observability_enabled=_env_bool("SEO_AGENT_OBSERVABILITY_ENABLED", True),
             gsc_timeout_seconds=float(os.getenv("SEO_AGENT_GSC_TIMEOUT_SECONDS", "30")),
             max_window_days=int(os.getenv("SEO_AGENT_MAX_WINDOW_DAYS", "90")),
+            google_api_base=(
+                os.getenv("SEO_AGENT_GOOGLE_API_BASE", GOOGLE_API_BASE).strip() or GOOGLE_API_BASE
+            ),
+            google_proxy_url=_env_optional("SEO_AGENT_GOOGLE_PROXY_URL"),
+            google_verify_tls=_env_bool("SEO_AGENT_GOOGLE_VERIFY_TLS", True),
+            gsc_data_lag_days=int(
+                os.getenv("SEO_AGENT_GSC_DATA_LAG_DAYS", str(GSC_DATA_LAG_DAYS))
+            ),
             title_workflow_enabled=_env_bool("SEO_AGENT_TITLE_WORKFLOW_ENABLED", False),
             serp_mode=os.getenv("SEO_AGENT_SERP_MODE", "none").strip().lower() or "none",
             serp_static_path=_env_optional("SEO_AGENT_SERP_STATIC_PATH"),

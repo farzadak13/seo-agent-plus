@@ -17,6 +17,7 @@ from app.runs.store import RunStore
 from app.runtime.config import RuntimeConfig
 from app.runtime.worker import WorkerHandle
 from app.runtime.lease import postgres_worker_lease
+from app.runtime.gsc import build_google_transport
 from app.runtime.service import PersistentSEORunService
 from app.runtime.adapters import SiteAdapterFactory
 from app.runtime.title import build_title_workflow
@@ -66,8 +67,15 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     )
 
     if config.gsc_mode == "live":
+        # Built here rather than per run: one session, one connection pool, and
+        # one place where the egress proxy is configured. Token minting shares
+        # it, so a token is never issued to a different address than the one
+        # the data is fetched from.
         run_service = PersistentSEORunService(
-            repository=repository, secret_resolver=secret_resolver, settings=config,
+            repository=repository,
+            secret_resolver=secret_resolver,
+            settings=config,
+            transport=build_google_transport(config),
         )
     adapters = SiteAdapterFactory(secret_resolver)
 
