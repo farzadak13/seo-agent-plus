@@ -33,3 +33,11 @@ stage*_backup_*/
 all_project_code.txt
 all_test_code.txt
 *.patch
+
+# Credentials. Never committed, not even once — a key that reached a public
+# repo is burned whether or not the commit is reverted afterwards.
+secrets/
+!secrets/README.md
+*.pem
+*-privatekey*
+*service-account*.json
