@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.api.app import APIDependencies, create_app
-from app.api.auth import APIKeyAuthenticator
+from app.api.auth import TenantAPIKeyAuthenticator
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.observability import InMemoryEventSink, InMemoryMetricsSink, ObservabilityContext
 from app.onboarding.secrets import EnvironmentSecretResolver
@@ -22,6 +22,7 @@ from app.runtime.properties import build_property_lister
 from app.runtime.service import PersistentSEORunService
 from app.runtime.adapters import SiteAdapterFactory
 from app.runtime.title import build_title_workflow
+from app.tenancy.store import APIKeyStore, TenantStore
 
 
 @dataclass
@@ -30,6 +31,8 @@ class RuntimeContainer:
     repository: PostgresRepository
     job_store: JobStore
     site_store: SiteStore
+    tenant_store: TenantStore
+    api_key_store: APIKeyStore
     run_store: RunStore
     handlers: JobHandlerRegistry
     scheduler: JobScheduler
@@ -52,6 +55,8 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     job_store = JobStore(repository)
     site_store = SiteStore(repository)
     run_store = RunStore(repository)
+    tenant_store = TenantStore(repository)
+    api_key_store = APIKeyStore(repository)
 
     secret_resolver = EnvironmentSecretResolver()
 
@@ -126,6 +131,8 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         repository=repository,
         job_store=job_store,
         site_store=site_store,
+        tenant_store=tenant_store,
+        api_key_store=api_key_store,
         run_store=run_store,
         handlers=handlers,
         scheduler=scheduler,
@@ -155,7 +162,14 @@ def create_runtime_app(config: RuntimeConfig | None = None):
     app = create_app(
         APIDependencies(
             scheduler=container.scheduler,
-            authenticator=APIKeyAuthenticator(resolved_config.api_key),
+            # The configured key authenticates as the tenant "admin" and is
+            # confined to that tenant's own rows like any other. Customer keys
+            # come from the database, one tenant each; no key sees them all.
+            authenticator=TenantAPIKeyAuthenticator(
+                key_store=container.api_key_store,
+                tenant_store=container.tenant_store,
+                admin_key=resolved_config.api_key,
+            ),
             site_store=container.site_store,
             run_store=container.run_store,
             transaction_factory=container.repository.transaction,
