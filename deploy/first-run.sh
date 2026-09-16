@@ -33,9 +33,27 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 if [[ -z "$PROPERTY" || -z "$PAGE" || -z "$QUERY" ]]; then
-  echo "Usage: sudo bash first-run.sh <property-url> <page-url> <query> [days]" >&2
+  echo "Usage: sudo bash first-run.sh <property-url> <page-url> <query|@file> [days]" >&2
   exit 1
 fi
+
+# A Persian query typed through a Windows console and an ssh command line
+# passes through several layers that each get to decide what the bytes mean.
+# '@path' reads it from a file instead, so the bytes that reach Google are the
+# bytes on disk. A mangled query is not an error — it is an empty result that
+# looks like the page ranks for nothing.
+if [[ "$QUERY" == @* ]]; then
+  QUERY_FILE="${QUERY#@}"
+  [[ -s "$QUERY_FILE" ]] || fail "no such query file: ${QUERY_FILE}"
+  QUERY="$(python3 -c '
+import sys
+print(open(sys.argv[1], encoding="utf-8").read().strip())' "$QUERY_FILE")"
+fi
+printf "query: %s\n" "$QUERY"
+python3 -c '
+import sys
+q = sys.argv[1]
+print("        codepoints:", " ".join(f"U+{ord(c):04X}" for c in q[:12]), "..." if len(q) > 12 else "")' "$QUERY"
 
 set -a
 # shellcheck disable=SC1090
