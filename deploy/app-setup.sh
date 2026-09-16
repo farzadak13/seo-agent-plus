@@ -119,6 +119,25 @@ EOF
   echo
 fi
 
+# --- deploy key -------------------------------------------------------------
+# Generated here rather than by hand, so the private half is born on the
+# server and never travels. It is registered on the repository as read-only:
+# a server that can push is a server that can rewrite your history.
+say "deploy key"
+DEPLOY_KEY="${APP_ROOT}/deploy_key"
+if [[ -s "$DEPLOY_KEY" ]]; then
+  echo "already exists"
+else
+  sudo -u "$APP_USER" ssh-keygen -t ed25519 -N "" -C "seoagent@${DOMAIN}" -f "$DEPLOY_KEY" -q
+  echo "created"
+fi
+chmod 600 "$DEPLOY_KEY"
+chown "${APP_USER}:${APP_USER}" "$DEPLOY_KEY" "${DEPLOY_KEY}.pub"
+sudo -u "$APP_USER" ssh-keyscan -t ed25519 github.com 2>/dev/null \
+  >> "${APP_ROOT}/.ssh_known_hosts" || true
+sort -u -o "${APP_ROOT}/.ssh_known_hosts" "${APP_ROOT}/.ssh_known_hosts"
+chown "${APP_USER}:${APP_USER}" "${APP_ROOT}/.ssh_known_hosts"
+
 # --- systemd ----------------------------------------------------------------
 say "systemd unit"
 install -m 644 "${HERE}/seoagent.service" /etc/systemd/system/seoagent.service
@@ -208,12 +227,22 @@ echo "reloaded"
 say "done"
 cat <<EOF
 
-Next:
+Next, in order:
 
-  1. Install the Google service account key:
+  1. Add this as a READ-ONLY deploy key on the repository
+     (GitHub: Settings -> Deploy keys -> Add deploy key, leave write access off):
+
+$(cat "${DEPLOY_KEY}.pub")
+
+  2. Clone the code:
+         sudo -u ${APP_USER} git clone \\
+           --config core.sshCommand="ssh -i ${DEPLOY_KEY} -o IdentitiesOnly=yes -o UserKnownHostsFile=${APP_ROOT}/.ssh_known_hosts" \\
+           git@github.com:<owner>/<repo>.git ${APP_ROOT}/current
+
+  3. Install the Google service account key:
          sudo bash app-credential.sh /path/to/service-account.json
 
-  2. Deploy the code:
+  4. Deploy:
          sudo bash app-deploy.sh
 
 EOF
