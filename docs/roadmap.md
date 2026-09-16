@@ -34,8 +34,8 @@ schema ممنوع کرده بود.
 | ۳۱ Site و Run | ✅ تأییدشده | همان |
 | ۳۲ / ۳۲b / ۳۲c Observability | ⚠️ کدنویسی‌شده | sink ها in-memory اند؛ با restart همه چیز می‌پرد |
 | ۳۳ Runtime Wiring | ✅ تأییدشده | `tests/integration/test_runtime_live.py` — شامل restart و recovery |
-| ۳۴ اتصال واقعی GSC | ⚠️ کدنویسی‌شده | هرگز به گوگل وصل نشده |
-| ۳۵ صحت تصمیم‌گیری | ⚠️ کدنویسی‌شده | منطقش خوب و پرتست است، ولی هرگز دادهٔ واقعی ندیده |
+| ۳۴ اتصال واقعی GSC | ✅ تأییدشده | روی production با service account واقعی به گوگل وصل شد |
+| ۳۵ صحت تصمیم‌گیری | ✅ تأییدشده | روی دادهٔ واقعی pama.shop اجرا شد؛ گیت‌های کیفیت پاس شدند |
 | ۳۶ پیشنهاد عنوان | ⚠️ نیمه | wiring کامل شد؛ SERP provider واقعی ندارد، LLM زنده آزمایش نشده |
 | ۳۷ تأیید اقدام | ⛔ شروع نشده | |
 | ۳۸ اجرای واقعی روی سایت | ⚠️ کدنویسی‌شده | adapter ها contract test دارند، روی سایت واقعی اجرا نشده‌اند |
@@ -43,7 +43,7 @@ schema ممنوع کرده بود.
 | ۴۰ پایداری Job و Run | ⚠️ ناقص | single-worker + advisory lock هست؛ lease و heartbeat هر job نیست |
 | ۴۱ Observability عملیاتی | ⛔ شروع نشده | |
 | ۴۲ رابط کاربری | ⛔ شروع نشده | |
-| ۴۳ استقرار و پذیرش | ⛔ شروع نشده | Dockerfile خود برنامه، CI، backup، monitoring هیچ‌کدام نیست |
+| ۴۳ استقرار و پذیرش | ⚠️ نیمه | سرور، TLS، systemd، انتشار با rollback هست؛ CI و backup و monitoring نیست |
 
 زیرساخت تست فعلی: **۸۶۸ تست unit** و **۲۵ تست integration** روی PostgreSQL
 واقعی، به‌علاوهٔ یک migration runner با ثبت و checksum.
@@ -171,52 +171,75 @@ onboarding جداست.
 
 ---
 
+---
+
 ## جلسهٔ بعد از اینجا شروع می‌شود
 
-آخرین وضعیت: **۹۴۸ تست unit سبز**، working tree تمیز، سه commit آخر:
+آخرین وضعیت: **۹۷۵ تست unit سبز**، و برنامه روی production اجرا می‌شود.
 
-```
-2314d38 chore(deploy): server bootstrap, TLS و صفحهٔ فرود hoshyarseo
-1c55759 feat(runtime): wire egress and credentials from config; refuse unsettled days
-66843d2 feat(gsc): keep the error body, and make a credential refreshable
-```
+### چه چیزی زنده است
 
-### کار نیمه‌تمام کد
+`https://hoshyarseo.ir` — گواهی Let's Encrypt (انقضا ۲۰۲۶-۱۲-۱۵، تمدید خودکار
+با `--dry-run` تأیید شد)، nginx، PostgreSQL 16، و سرویس `seoagent` روی systemd
+با یک پروسه (worker داخل همان پروسه است و advisory lock می‌گیرد).
 
-**onboarding با `sites.list`.** آخرین تکهٔ قدم دوم. الان کاربر باید
-`property_url` را تایپ کند و آن رشته باید بایت‌به‌بایت با چیزی که گوگل دارد
-یکی باشد — یک اسلش کم یا زیاد یعنی ۴۰۳ که شبیه «دسترسی ندارید» است. راه‌حل:
-`GET /webmasters/v3/sites` را صدا بزنیم و فهرست property های تأییدشده را با
-سطح دسترسی‌شان نشان دهیم تا کاربر انتخاب کند.
+اولین تحلیل واقعی اجرا شد: `https://pama.shop/search/men-shoes` برای عبارت
+«کفش پاما مردانه»، پنجرهٔ ۲۰۲۶-۰۹-۰۷ تا ۲۰۲۶-۰۹-۱۳. نتیجه: هیچ سیگنالی
+تشخیص داده نشد، و درست بود — جایگاه ۱٫۰۱ و CTR ۶۱٫۵٪ در برابر ۵۹٫۳٪ baseline.
+کامل بودن هر دو پنجره ۱٫۰.
 
-هشدار معماری که موقع نوشتن لایهٔ اعتبارنامه پیدا شد و اینجا حیاتی است:
-service account بین همهٔ مشتری‌ها مشترک است، پس `sites.list` با آن کلید
-**property های همهٔ مشتریانی که تا حالا دسترسی داده‌اند** را برمی‌گرداند.
-دامنهٔ هر tenant باید از دیتابیس خودمان بیاید، نه از چیزی که گوگل برمی‌گرداند.
-`isolated_per_tenant` در `app/gsc/credentials.py` همین را علامت می‌زند.
+### دسترسی
 
-### سرور hoshyarseo.ir
+    ssh seo-deploy          # کاربر deploy، از ProxyJump روی vakil
+    /opt/seoagent/current   # symlink به نسخهٔ جاری
+    /etc/seoagent/env       # همهٔ رازها، ۶۴۰، root:seoagent
 
-ماشین `130.185.120.76` در ابر آروان هیچ‌وقت بالا نیامد: نه ping، نه TCP 22،
-کنسول وب هم کار نمی‌کند. چون کنسول اصلاً از شبکه رد نمی‌شود، خراب بودن هر دو
-یعنی VM اصلاً boot نشده. ترتیب: restart → rebuild (حذف نه؛ بلوک ۴۸ ساعتهٔ
-مقرراتی) → تیکت پشتیبانی.
+ورود با رمز و ورود root هر دو بسته‌اند؛ `sshd -T` تأییدش کرده. تنها کلید
+`~/.ssh/hoshyarseo` است و یک نسخه‌اش در `secrets/` نگه داشته می‌شود.
 
-بعد از بالا آمدن:
+### اسکریپت‌های deploy
 
-1. `deploy/bootstrap.sh` (با `sudo`، کاربر `root@`)
-2. ورود با کاربر `deploy` را از یک پنجرهٔ دیگر تست کنید، بعد `harden-ssh.sh`
-3. رکورد A برای `hoshyarseo.ir` و `www` — **پروکسی/CDN خاموش**، وگرنه
-   چالش HTTP-01 به ماشین نمی‌رسد
-4. `deploy/enable-tls.sh` (خودش DNS را چک می‌کند تا سهمیهٔ Let's Encrypt
-   هدر نرود)
-5. `deploy/landing/` را در `/var/www/hoshyarseo` بگذارید
+| اسکریپت | کی |
+| --- | --- |
+| `bootstrap.sh` | یک بار، روی سرور تازه |
+| `harden-ssh.sh` | بعد از تأیید کاربر جایگزین |
+| `enable-tls.sh` | بعد از اینکه DNS به ماشین اشاره کرد |
+| `app-setup.sh` | یک بار، دیتابیس و systemd و nginx |
+| `app-credential.sh` | نصب کلید service account |
+| `app-release.sh` | هر انتشار: `git archive` → tarball → migrate → swap → readyz → rollback در صورت شکست |
+| `smoke.sh` | تست سرتاسری، شامل تماس واقعی با گوگل |
+| `first-run.sh` | یک تحلیل کامل روی دادهٔ واقعی |
+| `rotate-api-key.sh` | هر وقت کلید جایی دیده شد |
 
-### بعد از آن، به ترتیب
+### مانده، به ترتیب اهمیت
 
-1. onboarding با `sites.list`
-2. استقرار خود برنامه روی سرور (Postgres، migration، systemd یا docker، healthcheck)
-3. تأیید OAuth گوگل — سیاست حریم خصوصی روی دامنه، ویدیوی دمو، ارسال
-4. هویت tenant و کلید API هر مشتری
-5. ذخیرهٔ رمزنگاری‌شدهٔ اعتبارنامه در دیتابیس (الان افزودن سایت یعنی تغییر env و restart)
-6. تصمیم منبع SERP — هنوز باز، و Stage 36 و 38 هر دو به آن گره خورده‌اند
+۱. **IP از ایران باز نمی‌شود.** `130.185.120.76` از داخل آروان جواب می‌دهد و از
+   ایران نه. سایت برای مشتری ایرانی نامرئی است. یا تیکت برای IP دیگر، یا CDN
+   آروان جلویش. **این تنها چیزی است که بین اینجا و راه‌اندازی ایستاده.**
+
+۲. **هویت tenant.** `SEO_AGENT_API_KEY` یک کلید سراسری است. برای فروش، هر
+   مشتری باید کلید و دامنهٔ خودش را داشته باشد. پیش‌نیاز Stage 37.
+
+۳. **تأیید OAuth گوگل.** تا آن نیاید مشتری باید
+   `seoagent-gsc@hoshyarseo.iam.gserviceaccount.com` را دستی در Search Console
+   خودش اضافه کند. صفحهٔ حریم خصوصی آماده است:
+   `https://hoshyarseo.ir/privacy.html`.
+
+۴. **ذخیرهٔ رمزنگاری‌شدهٔ اعتبارنامه در دیتابیس.** الان افزودن سایت یعنی
+   ویرایش `/etc/seoagent/env` و restart.
+
+۵. **منبع SERP.** هنوز باز. Stage 36 و 38 هر دو به آن گره خورده‌اند.
+
+۶. **CI، backup، monitoring.** هیچ‌کدام نیست. backup دیتابیس مهم‌ترین‌شان است.
+
+### چیزهایی که می‌دانیم و ننوشتن‌شان گران تمام می‌شود
+
+* سرور نمی‌تواند به نام عمومی خودش وصل شود (hairpin NAT). هر curl از داخل
+  سرور به `hoshyarseo.ir` باید `--resolve hoshyarseo.ir:443:127.0.0.1` داشته
+  باشد، وگرنه به‌جای خطا **آویزان می‌شود**.
+* ایمیج آروان فایل `01-arvan-root-login.conf` دارد که `PermitRootLogin yes`
+  می‌گذارد. چون sshd **اولین** مقدار را می‌گیرد، هر فایل سفت‌کننده باید
+  شماره‌اش کوچک‌تر باشد — `00-`.
+* `git archive` تنها راه درست فرستادن کد است؛ `scp -r` پوشهٔ پروژه، `.env` و
+  `secrets/` را هم می‌برد.
+* در پاورشل او گاهی حروف بزرگ لاتین تایپ نمی‌شوند. دستورها را با حروف کوچک بده.
