@@ -159,8 +159,10 @@ echo "site_id ${SITE_ID}, run_id ${RUN_ID}"
 # puts a credential on someone's screen is not a convenience.
 cat <<'HINT'
 
-For the full result, on this server:
+For the full result, on this server — with the same key this run used, not
+the admin one, which owns none of this and would be refused:
     sudo bash -c 'source /etc/seoagent/env; curl -sS \
-      -H "authorization: bearer $SEO_AGENT_API_KEY" \
+      --resolve hoshyarseo.ir:443:127.0.0.1 \
+      -H "authorization: bearer ${SEO_AGENT_TENANT_KEY:-$SEO_AGENT_API_KEY}" \
       https://hoshyarseo.ir/v1/runs/RUN_ID' | python3 -m json.tool
 HINT
