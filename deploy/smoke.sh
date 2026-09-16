@@ -39,9 +39,16 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
-[[ -n "${SEO_AGENT_API_KEY:-}" ]] || fail "SEO_AGENT_API_KEY is not set"
+# Prefer a real tenant's key over the admin identity, so what these scripts
+# create belongs to the customer rather than to the operator. bind-tenant-key.sh
+# puts one here.
+KEY="${SEO_AGENT_TENANT_KEY:-${SEO_AGENT_API_KEY:-}}"
+[[ -n "$KEY" ]] || fail "neither SEO_AGENT_TENANT_KEY nor SEO_AGENT_API_KEY is set"
+[[ -n "${SEO_AGENT_TENANT_KEY:-}" ]] \
+  && echo "acting as a tenant key" \
+  || echo "acting as the admin key (run bind-tenant-key.sh to use a tenant)"
 
-AUTH="authorization: bearer ${SEO_AGENT_API_KEY}"
+AUTH="authorization: bearer ${KEY}"
 JSON="content-type: application/json"
 
 say "readiness, through nginx and TLS"

@@ -47,6 +47,14 @@ def main(argv: list[str] | None = None) -> int:
     issue = sub.add_parser("issue-key", help="Issue another key for a tenant.")
     issue.add_argument("--tenant", required=True)
     issue.add_argument("--label", default="")
+    issue.add_argument(
+        "--bare",
+        action="store_true",
+        help=(
+            "Print only the key, with no surrounding text. For a script that "
+            "stores it directly, so it never reaches a screen."
+        ),
+    )
 
     revoke = sub.add_parser("revoke-key", help="Revoke a key by its public id.")
     revoke.add_argument("--key-id", required=True)
@@ -91,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         if tenants.find(args.tenant) is None:
             print(f"No such tenant: {args.tenant}", file=sys.stderr)
             return 1
-        _issue(api_keys, args.tenant, args.label)
+        _issue(api_keys, args.tenant, args.label, bare=args.bare)
         return 0
 
     if args.command == "revoke-key":
@@ -117,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _issue(api_keys: APIKeyStore, tenant_id: str, label: str) -> None:
+def _issue(api_keys: APIKeyStore, tenant_id: str, label: str, *, bare: bool = False) -> None:
     issued = key_format.issue()
     api_keys.create(
         APIKeyRecord(
@@ -127,6 +135,12 @@ def _issue(api_keys: APIKeyStore, tenant_id: str, label: str) -> None:
             label=label,
         )
     )
+    if bare:
+        # Nothing but the key, so a caller can capture it into a file. A key
+        # that is displayed is a key that gets copied somewhere it should not
+        # be; this path exists so it never has to be.
+        print(issued.token)
+        return
     print()
     print("  key id:  " + issued.key_id + "   (public; safe in logs and tickets)")
     print("  key:     " + issued.token)
