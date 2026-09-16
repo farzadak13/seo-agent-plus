@@ -175,9 +175,11 @@ server {
 }
 
 server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    http2 on;
+    # `listen ... ssl http2` rather than the newer `http2 on;` directive:
+    # Ubuntu 24.04 ships nginx 1.24, where `http2 on;` does not exist and the
+    # config fails to load at all.
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name ${DOMAIN} www.${DOMAIN};
 
     ssl_certificate     ${CERT_DIR}/fullchain.pem;
