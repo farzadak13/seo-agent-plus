@@ -229,20 +229,23 @@ cat <<EOF
 
 Next, in order:
 
-  1. Add this as a READ-ONLY deploy key on the repository
-     (GitHub: Settings -> Deploy keys -> Add deploy key, leave write access off):
+  1. Install the Google service account key:
+         sudo bash app-credential.sh /path/to/service-account.json
+
+  2. Ship a release. From your machine:
+         git archive --format=tar.gz -o release.tgz main
+         scp release.tgz <this-host>:/tmp/
+     then here:
+         sudo bash app-release.sh /tmp/release.tgz
+
+If you would rather pull from the repository instead of pushing tarballs,
+add this as a READ-ONLY deploy key (Deploy keys, write access off) and use
+app-deploy.sh:
 
 $(cat "${DEPLOY_KEY}.pub")
 
-  2. Clone the code:
          sudo -u ${APP_USER} git clone \\
            --config core.sshCommand="ssh -i ${DEPLOY_KEY} -o IdentitiesOnly=yes -o UserKnownHostsFile=${APP_ROOT}/.ssh_known_hosts" \\
            git@github.com:<owner>/<repo>.git ${APP_ROOT}/current
-
-  3. Install the Google service account key:
-         sudo bash app-credential.sh /path/to/service-account.json
-
-  4. Deploy:
-         sudo bash app-deploy.sh
 
 EOF
