@@ -41,3 +41,7 @@ secrets/
 *.pem
 *-privatekey*
 *service-account*.json
+
+# Release archives built by `git archive`.
+release.tgz
+*.tgz
