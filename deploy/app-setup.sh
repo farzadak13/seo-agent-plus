@@ -175,9 +175,9 @@ server {
 }
 
 server {
-    # `listen ... ssl http2` rather than the newer `http2 on;` directive:
-    # Ubuntu 24.04 ships nginx 1.24, where `http2 on;` does not exist and the
-    # config fails to load at all.
+    # The old two-token form, not the newer standalone http2 directive:
+    # Ubuntu 24.04 ships nginx 1.24, where that directive does not exist yet
+    # and the whole config fails to load.
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
     server_name ${DOMAIN} www.${DOMAIN};
