@@ -137,4 +137,14 @@ PY
 
 say "done"
 echo "site_id ${SITE_ID}, run_id ${RUN_ID}"
-echo "Full result: curl -H \"$AUTH\" ${BASE}/v1/runs/${RUN_ID}"
+# The API key is deliberately not printed. An earlier version echoed a ready
+# made curl command with the header filled in; it was pasted into a chat
+# window within the minute, and the key had to be rotated. A convenience that
+# puts a credential on someone's screen is not a convenience.
+cat <<'HINT'
+
+For the full result, on this server:
+    sudo bash -c 'source /etc/seoagent/env; curl -sS \
+      -H "authorization: bearer $SEO_AGENT_API_KEY" \
+      https://hoshyarseo.ir/v1/runs/RUN_ID' | python3 -m json.tool
+HINT
