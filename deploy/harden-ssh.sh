@@ -71,21 +71,43 @@ if [[ "$CONFIRM" != "$ADMIN_USER" ]]; then
 fi
 
 say "disabling root login"
-cat > /etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
+
+# The number matters more than it looks. sshd takes the FIRST value it sees
+# for a keyword, and /etc/ssh/sshd_config includes sshd_config.d/*.conf in
+# lexical order — so a file named 99- loses to every file that sorts before
+# it. Cloud images ship exactly such files: Ubuntu's 50-cloud-init.conf, and
+# on ArvanCloud an 01-arvan-root-login.conf that sets PermitRootLogin yes.
+# This was originally written as 99-hardening.conf. It wrote cleanly, passed
+# sshd -t, reloaded without error, printed "done" — and changed nothing.
+HARDENING="/etc/ssh/sshd_config.d/00-hardening.conf"
+cat > "$HARDENING" <<'EOF'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
 EOF
+rm -f /etc/ssh/sshd_config.d/99-hardening.conf
 
 if ! sshd -t; then
   echo "sshd rejected the config; reverting." >&2
-  cat > /etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
-PasswordAuthentication no
-KbdInteractiveAuthentication no
-EOF
+  rm -f "$HARDENING"
+  exit 1
+fi
+
+# Ask sshd what it will actually do rather than trusting that writing a file
+# was enough. This is the check whose absence hid the bug above.
+EFFECTIVE="$(sshd -T | grep -Ei '^(permitrootlogin|passwordauthentication) ')"
+echo "$EFFECTIVE" | sed 's/^/  /'
+if ! grep -qx "permitrootlogin no" <<<"$EFFECTIVE" \
+   || ! grep -qx "passwordauthentication no" <<<"$EFFECTIVE"; then
+  echo >&2
+  echo "sshd still reports the old settings, so something else wins." >&2
+  echo "Look for a lower-numbered file: ls /etc/ssh/sshd_config.d/" >&2
+  rm -f "$HARDENING"
   exit 1
 fi
 
 systemctl reload ssh
+
 say "done"
-echo "Root login disabled. Existing sessions stay open; test a new one now."
+echo "Root login and password login are off, and sshd confirms it."
+echo "Existing sessions stay open; test a new one now, before closing this."
