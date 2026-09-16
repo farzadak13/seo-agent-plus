@@ -13,6 +13,15 @@
 #
 set -euo pipefail
 
+# Every request below goes to the public name so that nginx and the
+# certificate are genuinely exercised, but --resolve pins it to the loopback
+# address. Reaching your own public IP from inside the machine depends on the
+# network doing hairpin NAT, and on DNS answering — neither is guaranteed, and
+# when it fails it fails as a hang rather than as an error. The first run of
+# this check timed out for exactly that reason while the thing it was checking
+# was fine.
+RESOLVE=(--resolve "hoshyarseo.ir:443:127.0.0.1")
+
 ENV_FILE="/etc/seoagent/env"
 
 say() { printf "\n\033[1m==> %s\033[0m\n" "$1"; }
@@ -45,7 +54,7 @@ echo "service is ready"
 say "checking the old key no longer works"
 # Any wrong key must be refused; this proves the restart actually took effect
 # rather than leaving the old value loaded in the running process.
-CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+CODE="$(curl "${RESOLVE[@]}" -s -o /dev/null -w '%{http_code}' --max-time 10 \
         -H "authorization: bearer definitely-not-the-key" \
         https://hoshyarseo.ir/v1/sites -X POST \
         -H 'content-type: application/json' \

@@ -14,6 +14,15 @@
 #
 set -euo pipefail
 
+# Every request below goes to the public name so that nginx and the
+# certificate are genuinely exercised, but --resolve pins it to the loopback
+# address. Reaching your own public IP from inside the machine depends on the
+# network doing hairpin NAT, and on DNS answering — neither is guaranteed, and
+# when it fails it fails as a hang rather than as an error. The first run of
+# this check timed out for exactly that reason while the thing it was checking
+# was fine.
+RESOLVE=(--resolve "hoshyarseo.ir:443:127.0.0.1")
+
 ENV_FILE="/etc/seoagent/env"
 BASE="https://hoshyarseo.ir"
 CRED_REF="GSC_SERVICE_ACCOUNT_JSON"
@@ -75,7 +84,7 @@ field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1
 
 say "site"
 SITE="$(python3 -c 'import json,sys; print(json.dumps({"name":"PAMA","base_url":sys.argv[1]}))' "$PROPERTY" \
-  | curl -fsS --max-time 15 "${BASE}/v1/sites" -X POST -H "$AUTH" -H "$JSON" --data-binary @-)" \
+  | curl "${RESOLVE[@]}" -fsS --max-time 15 "${BASE}/v1/sites" -X POST -H "$AUTH" -H "$JSON" --data-binary @-)" \
   || fail "could not create a site"
 SITE_ID="$(field site_id <<<"$SITE")"
 echo "site_id: ${SITE_ID}"
@@ -83,7 +92,7 @@ echo "site_id: ${SITE_ID}"
 say "connecting the property"
 python3 -c 'import json,sys; print(json.dumps({"property_url":sys.argv[1],"credential_ref":sys.argv[2],"auth_mode":"service_account"}))' \
   "$PROPERTY" "$CRED_REF" > "${WORK}/connect.json"
-CODE="$(curl -sS -o "${WORK}/connect-response.json" -w '%{http_code}' --max-time 45 \
+CODE="$(curl "${RESOLVE[@]}" -sS -o "${WORK}/connect-response.json" -w '%{http_code}' --max-time 45 \
         "${BASE}/v1/sites/${SITE_ID}/connections/gsc" \
         -X PUT -H "$AUTH" -H "$JSON" --data-binary "@${WORK}/connect.json")"
 if [[ "$CODE" != "200" ]]; then
@@ -100,14 +109,14 @@ echo "  baseline is the ${DAYS} days before that, chosen by the engine"
 say "starting the run"
 python3 -c 'import json,sys; print(json.dumps({"start_date":sys.argv[1],"end_date":sys.argv[2],"normalized_url":sys.argv[3],"normalized_query":sys.argv[4],"candidate_id":"first-real-run"}))' \
   "$START" "$END" "$PAGE" "$QUERY" > "${WORK}/run.json"
-RUN="$(curl -fsS --max-time 20 "${BASE}/v1/sites/${SITE_ID}/runs" -X POST -H "$AUTH" -H "$JSON" \
+RUN="$(curl "${RESOLVE[@]}" -fsS --max-time 20 "${BASE}/v1/sites/${SITE_ID}/runs" -X POST -H "$AUTH" -H "$JSON" \
        --data-binary "@${WORK}/run.json")" || fail "could not create a run"
 RUN_ID="$(field run_id <<<"$RUN")"
 echo "run_id: ${RUN_ID}"
 
 say "waiting for the worker"
 for _ in $(seq 1 60); do
-  curl -fsS --max-time 10 "${BASE}/v1/runs/${RUN_ID}" -H "$AUTH" > "${WORK}/current.json" || true
+  curl "${RESOLVE[@]}" -fsS --max-time 10 "${BASE}/v1/runs/${RUN_ID}" -H "$AUTH" > "${WORK}/current.json" || true
   STATUS="$(field status < "${WORK}/current.json" 2>/dev/null || echo "")"
   case "$STATUS" in
     succeeded|failed|cancelled) break ;;

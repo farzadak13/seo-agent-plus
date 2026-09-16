@@ -14,6 +14,15 @@
 #
 set -euo pipefail
 
+# Every request below goes to the public name so that nginx and the
+# certificate are genuinely exercised, but --resolve pins it to the loopback
+# address. Reaching your own public IP from inside the machine depends on the
+# network doing hairpin NAT, and on DNS answering — neither is guaranteed, and
+# when it fails it fails as a hang rather than as an error. The first run of
+# this check timed out for exactly that reason while the thing it was checking
+# was fine.
+RESOLVE=(--resolve "hoshyarseo.ir:443:127.0.0.1")
+
 ENV_FILE="/etc/seoagent/env"
 BASE="https://hoshyarseo.ir"
 CRED_REF="GSC_SERVICE_ACCOUNT_JSON"
@@ -36,18 +45,18 @@ AUTH="authorization: bearer ${SEO_AGENT_API_KEY}"
 JSON="content-type: application/json"
 
 say "readiness, through nginx and TLS"
-READY="$(curl -fsS --max-time 10 "${BASE}/readyz")" || fail "/readyz did not answer"
+READY="$(curl "${RESOLVE[@]}" -fsS --max-time 10 "${BASE}/readyz")" || fail "/readyz did not answer"
 echo "$READY"
 
 say "authentication is actually enforced"
-CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${BASE}/v1/sites" \
+CODE="$(curl "${RESOLVE[@]}" -s -o /dev/null -w '%{http_code}' --max-time 10 "${BASE}/v1/sites" \
         -X POST -H "$JSON" -d '{"name":"x","base_url":"https://example.com"}')"
 [[ "$CODE" == "401" || "$CODE" == "403" ]] \
   || fail "an unauthenticated write returned ${CODE}; it must be refused"
 echo "unauthenticated write refused with ${CODE}"
 
 say "creating a throwaway site"
-SITE="$(curl -fsS --max-time 15 "${BASE}/v1/sites" -X POST -H "$AUTH" -H "$JSON" \
+SITE="$(curl "${RESOLVE[@]}" -fsS --max-time 15 "${BASE}/v1/sites" -X POST -H "$AUTH" -H "$JSON" \
         -d '{"name":"smoke test","base_url":"https://pama.shop"}')" \
   || fail "could not create a site"
 SITE_ID="$(python3 -c "import json,sys; print(json.load(sys.stdin)['site_id'])" <<<"$SITE")"
@@ -56,7 +65,7 @@ echo "site_id: ${SITE_ID}"
 say "asking Google which properties this credential can see"
 # This is the real test. It exercises the egress path, the service account
 # signing and refresh, and the error classification, against Google itself.
-BODY="$(curl -sS --max-time 45 "${BASE}/v1/sites/${SITE_ID}/connections/gsc/available" \
+BODY="$(curl "${RESOLVE[@]}" -sS --max-time 45 "${BASE}/v1/sites/${SITE_ID}/connections/gsc/available" \
         -X POST -H "$AUTH" -H "$JSON" \
         -d "{\"credential_ref\":\"${CRED_REF}\",\"auth_mode\":\"service_account\"}")"
 
