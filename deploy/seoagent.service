@@ -1,0 +1,43 @@
+[Unit]
+Description=SEO Agent API and worker
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=exec
+User=seoagent
+Group=seoagent
+WorkingDirectory=/opt/seoagent/current
+EnvironmentFile=/etc/seoagent/env
+
+# One process, deliberately. The worker runs inside the API process and takes
+# a PostgreSQL advisory lock on startup; a second process would find the lock
+# held and fail to start. Concurrency here comes from async request handling,
+# not from forked workers, and 2GB of RAM has no room for more anyway.
+ExecStart=/opt/seoagent/venv/bin/uvicorn app.api.main:app_factory --factory \
+          --host 127.0.0.1 --port 8000 --workers 1 --proxy-headers \
+          --forwarded-allow-ips 127.0.0.1
+
+# Restart on failure, but give up if it is crash-looping: a service that
+# restarts forever looks healthy in systemctl and hides the real error.
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=120
+
+# The worker finishes what it is holding before the process goes away.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/seoagent
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
