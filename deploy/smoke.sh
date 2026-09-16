@@ -87,10 +87,10 @@ if "detail" in payload:
     print("Google refused or could not be reached:")
     print(" ", payload["detail"])
     print()
-    print("A 'permission_denied' here is the expected answer for a brand new")
-    print("service account: it authenticated fine, it simply has not been")
-    print("granted any property yet.")
-    sys.exit(0)
+    print("This is a failure, not a normal state. A service account with no")
+    print("properties granted gets 200 and an empty list, not a refusal.")
+    print("Run diagnose-gsc.sh to see Google's unedited response.")
+    sys.exit(1)
 
 properties = payload.get("properties", [])
 if not properties:
