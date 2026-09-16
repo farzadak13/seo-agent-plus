@@ -6,15 +6,15 @@
 # and burning quota. Separate from bootstrap.sh for that reason: base setup
 # succeeds immediately, certificates wait for DNS propagation.
 #
-#   sudo bash enable-tls.sh
+#   sudo bash enable-tls.sh you@example.com
 #
 set -euo pipefail
 
 DOMAIN="hoshyarseo.ir"
 # Let's Encrypt sends expiry warnings here. A mailbox that does not exist yet
-# means no warning when renewal starts failing, so override it with one you
-# actually read:  sudo EMAIL=you@example.com bash enable-tls.sh
-EMAIL="${EMAIL:-info@hoshyarseo.ir}"
+# means no warning when renewal starts failing, so pass one you actually read
+# as the first argument.
+EMAIL="${1:-${EMAIL:-info@hoshyarseo.ir}}"
 
 say() { printf "\n\033[1m==> %s\033[0m\n" "$1"; }
 
