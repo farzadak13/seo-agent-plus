@@ -18,6 +18,7 @@ from app.runtime.config import RuntimeConfig
 from app.runtime.worker import WorkerHandle
 from app.runtime.lease import postgres_worker_lease
 from app.runtime.gsc import build_google_transport
+from app.runtime.properties import build_property_lister
 from app.runtime.service import PersistentSEORunService
 from app.runtime.adapters import SiteAdapterFactory
 from app.runtime.title import build_title_workflow
@@ -36,6 +37,7 @@ class RuntimeContainer:
     worker: WorkerHandle
     adapters: SiteAdapterFactory
     title_workflow: object | None = None
+    gsc_property_lister: object | None = None
 
     def start(self) -> None:
         if self.config.worker_enabled:
@@ -66,16 +68,25 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         pipeline_runner=DeterministicPipelineRunner(),
     )
 
+    gsc_property_lister = None
     if config.gsc_mode == "live":
         # Built here rather than per run: one session, one connection pool, and
         # one place where the egress proxy is configured. Token minting shares
         # it, so a token is never issued to a different address than the one
         # the data is fetched from.
+        transport = build_google_transport(config)
         run_service = PersistentSEORunService(
             repository=repository,
             secret_resolver=secret_resolver,
             settings=config,
-            transport=build_google_transport(config),
+            transport=transport,
+        )
+        # Onboarding asks Google which properties a credential can see, so the
+        # customer picks one instead of typing a string that has to match byte
+        # for byte. In stub mode there is nothing to ask, and the property is
+        # taken on trust as before.
+        gsc_property_lister = build_property_lister(
+            config, secret_resolver=secret_resolver, transport=transport
         )
     adapters = SiteAdapterFactory(secret_resolver)
 
@@ -122,6 +133,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         worker=worker,
         adapters=adapters,
         title_workflow=title_workflow,
+        gsc_property_lister=gsc_property_lister,
     )
 
 
@@ -148,6 +160,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             run_store=container.run_store,
             transaction_factory=container.repository.transaction,
             adapter_factory=container.adapters,
+            gsc_property_lister=container.gsc_property_lister,
         )
     )
     app.router.lifespan_context = lifespan

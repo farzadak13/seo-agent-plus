@@ -8,6 +8,7 @@ from app.persistence.memory import InMemoryRepository
 from app.runtime.config import RuntimeConfig
 from app.runtime.container import create_runtime_app
 from app.runtime.worker import WorkerHandle
+from app.gsc.properties import GSCProperty
 from app.gsc.transport import GoogleResponse
 from app.runtime.gsc import LiveGSCGateway
 from app.runtime.adapters import SiteAdapterFactory
@@ -44,6 +45,11 @@ def setup_api(monkeypatch, missing_baseline=False):
         return GoogleResponse(200,json.dumps({'rows':rows}).encode(),{})
     monkeypatch.setattr('app.runtime.service.LiveGSCGateway',
         lambda site,timeout,request_fn=None:LiveGSCGateway(site,timeout=timeout,request_fn=request))
+    # Onboarding now checks the property against what Google reports, so the
+    # runtime needs something to ask. Google is not reachable from a test.
+    listed=[GSCProperty(site_url='https://example.com',permission_level='siteOwner')]
+    monkeypatch.setattr('app.runtime.container.build_property_lister',
+        lambda settings,*,secret_resolver,transport:(lambda *,auth_mode,credential_ref:listed))
     app=create_runtime_app(RuntimeConfig(api_key='test-key',database_dsn='unused',gsc_mode='live',worker_enabled=False))
     client=TestClient(app);client.headers['Authorization']='Bearer test-key'
     response=client.post('/v1/sites',json={'name':'Example','base_url':'https://example.com'})

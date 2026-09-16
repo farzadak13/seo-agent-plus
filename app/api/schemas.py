@@ -63,7 +63,7 @@ class CreateSiteRequest(BaseModel):
 class ConfigureGSCRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    property_url: HttpUrl
+    property_url: str = Field(min_length=1, max_length=2000)
     credential_ref: str = Field(min_length=1, max_length=200)
     auth_mode: str = Field(default="access_token", min_length=1, max_length=50)
     row_limit: int = Field(default=25_000, ge=1, le=25_000)
@@ -86,6 +86,9 @@ class SiteResponse(BaseModel):
     base_url: HttpUrl
     status: SiteStatus
     gsc_configured: bool
+    # Echoed back exactly as stored, so a UI can show which property is
+    # connected without the customer having to remember how they spelled it.
+    gsc_property_url: str | None = None
     site_adapter_configured: bool
     created_at: datetime
     updated_at: datetime
@@ -99,6 +102,7 @@ class SiteResponse(BaseModel):
             base_url=site.base_url,
             status=site.status,
             gsc_configured=site.gsc is not None,
+            gsc_property_url=site.gsc.property_url if site.gsc else None,
             site_adapter_configured=site.site_adapter is not None,
             created_at=site.created_at,
             updated_at=site.updated_at,
@@ -143,3 +147,42 @@ class RunResponse(BaseModel):
     @classmethod
     def from_run(cls, run):
         return cls.model_validate(run.model_dump())
+
+
+class AvailableGSCPropertiesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    credential_ref: str = Field(min_length=1, max_length=200)
+    auth_mode: str = Field(default="service_account", min_length=1, max_length=50)
+
+
+class GSCPropertyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # The exact string to send back when configuring. Never edit it.
+    site_url: str
+    display_name: str
+    permission_level: str
+    is_domain_property: bool
+    readable: bool
+
+
+class AvailableGSCPropertiesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    properties: list[GSCPropertyResponse]
+
+    @classmethod
+    def from_properties(cls, properties) -> "AvailableGSCPropertiesResponse":
+        return cls(
+            properties=[
+                GSCPropertyResponse(
+                    site_url=item.site_url,
+                    display_name=item.display_name,
+                    permission_level=item.permission_level,
+                    is_domain_property=item.is_domain_property,
+                    readable=item.readable,
+                )
+                for item in properties
+            ]
+        )

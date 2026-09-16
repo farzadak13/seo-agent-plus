@@ -11,6 +11,8 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api.auth import APIKeyAuthenticator
 from app.api.schemas import (
+    AvailableGSCPropertiesRequest,
+    AvailableGSCPropertiesResponse,
     ConfigureGSCRequest,
     ConfigureSiteAdapterRequest,
     CreateJobRequest,
@@ -49,9 +51,13 @@ class APIDependencies:
         run_id_factory: Callable[[], str] | None = None,
         transaction_factory=None,
         adapter_factory=None,
+        gsc_property_lister=None,
     ) -> None:
         self.transaction_factory = transaction_factory or nullcontext
         self.adapter_factory = adapter_factory
+        # None means we cannot ask Google which properties exist (stub mode).
+        # The property is then taken on trust, as it was before.
+        self.gsc_property_lister = gsc_property_lister
         self.scheduler = scheduler
         self.authenticator = authenticator
         self.job_id_factory = job_id_factory or (lambda: f"job-{uuid4().hex}")
@@ -157,6 +163,38 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         _ensure_owner(site.principal_id, authenticated_principal_id)
         return SiteResponse.from_site(site)
 
+    @app.post(
+        "/v1/sites/{site_id}/connections/gsc/available",
+        response_model=AvailableGSCPropertiesResponse,
+    )
+    def available_gsc_properties(
+        site_id: str,
+        request: AvailableGSCPropertiesRequest,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> AvailableGSCPropertiesResponse:
+        """List the properties this credential can see, so nothing is typed.
+
+        A property string has to match Google's byte for byte. Typing it is
+        the step that produces a 403 later and sends the customer off to
+        re-grant access they already had.
+        """
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, authenticated_principal_id)
+        if dependencies.gsc_property_lister is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Search Console is not configured for this runtime.",
+            )
+        try:
+            properties = dependencies.gsc_property_lister(
+                auth_mode=request.auth_mode, credential_ref=request.credential_ref
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            ) from exc
+        return AvailableGSCPropertiesResponse.from_properties(properties)
+
     @app.put("/v1/sites/{site_id}/connections/gsc", response_model=SiteResponse)
     def configure_gsc(
         site_id: str,
@@ -165,6 +203,45 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> SiteResponse:
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
+        if dependencies.gsc_property_lister is not None:
+            # Refuse a property Google does not report, rather than storing it
+            # and failing on the first run with a 403 that names nothing.
+            try:
+                properties = dependencies.gsc_property_lister(
+                    auth_mode=request.auth_mode, credential_ref=request.credential_ref
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+                ) from exc
+            chosen = next(
+                (item for item in properties if item.matches(request.property_url)), None
+            )
+            if chosen is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message": (
+                            "This credential cannot see that property. It must match "
+                            "exactly, including the trailing slash."
+                        ),
+                        "requested": request.property_url,
+                        "available": [item.site_url for item in properties],
+                    },
+                )
+            if not chosen.readable:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "message": (
+                            "That property is listed but not readable with this "
+                            "credential, so every run would fail. Verify it in "
+                            "Search Console first."
+                        ),
+                        "requested": request.property_url,
+                        "permission_level": chosen.permission_level,
+                    },
+                )
         updated = site.model_copy(
             update={
                 "gsc": GSCConnectionConfig(
@@ -233,7 +310,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> RunResponse:
         if request.end_date < request.start_date:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=422,
                 detail="end_date must be greater than or equal to start_date",
             )
         site = _get_site(dependencies, site_id)
