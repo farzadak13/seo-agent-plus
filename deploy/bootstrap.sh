@@ -188,8 +188,12 @@ Next, in order:
 
   0. From your own machine, confirm the new user works BEFORE closing this
      session, then lock root out:
-         ssh ${ADMIN_USER}@$(curl -fsS --max-time 5 https://api.ipify.org || echo "<server-ip>")
-         sudo bash harden-ssh.sh
+         ssh <the-${ADMIN_USER}-host> "whoami; sudo -n true && echo SUDO OK"
+         ssh -t <the-${ADMIN_USER}-host> "sudo bash /root/deploy/harden-ssh.sh"
+     Use however you reach this machine — a direct address, or a ProxyJump
+     entry in your ssh config if it is not routable from where you are. The
+     -t matters: harden-ssh.sh asks for confirmation and hangs without a
+     terminal.
      Keep this root session open until that succeeds. A server you cannot log
      into is not recoverable from here.
 

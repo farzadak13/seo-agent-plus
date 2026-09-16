@@ -20,6 +20,20 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# Without a terminal the confirmation prompt below is never displayed and the
+# script hangs forever with no output. `ssh host "cmd"` allocates no TTY, which
+# is exactly how this is normally run.
+if [[ ! -t 0 ]]; then
+  cat >&2 <<'EOF'
+This script asks for confirmation, so it needs a terminal.
+
+    ssh -t <host> "sudo bash /root/deploy/harden-ssh.sh"
+
+The -t is what allocates one.
+EOF
+  exit 1
+fi
+
 say "checking ${ADMIN_USER} can actually get in"
 
 if ! id -u "$ADMIN_USER" >/dev/null 2>&1; then
