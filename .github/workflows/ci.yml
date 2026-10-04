@@ -69,3 +69,17 @@ jobs:
             echo "Live database tests were skipped; the database is not reachable." >&2
             exit 1
           fi
+
+  wordpress-plugin:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          # The oldest PHP the plugin header promises, so a newer-only syntax
+          # fails here instead of on a customer's host.
+          php-version: "7.4"
+      - name: syntax check
+        run: |
+          find integrations/wordpress -name '*.php' -print0 \
+            | xargs -0 -n1 php -l

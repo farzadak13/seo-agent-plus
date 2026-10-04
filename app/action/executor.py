@@ -21,7 +21,7 @@ from app.models.action_lifecycle import transition_action
 from app.models.actions import ActionStatus
 from app.models.execution_run import ExecutionRunStatus
 from app.models.managed_action import AppliedChange, ManagedAction
-from app.models.site_adapter import AdapterOperationResult
+from app.models.site_adapter import AdapterOperationResult, AdapterRollbackRequest
 from app.onboarding.site_store import SiteStore
 from app.verification.engine import apply_verification, verify_action_state
 
@@ -140,12 +140,7 @@ def build_rollback_action_handler(
             )
             return _summary(action_store.update(managed))
         else:
-            operation = adapter.update_title(
-                site_id=managed.site_id,
-                normalized_url=managed.action.normalized_url,
-                new_title=applied.previous_value,
-                idempotency_key=f"rollback:{managed.action_id}",
-            )
+            operation = _restore(adapter, managed, applied)
             if not operation.success:
                 managed = managed.record(
                     action=managed.action,
@@ -186,6 +181,30 @@ def build_rollback_action_handler(
         return _summary(action_store.update(managed))
 
     return handler
+
+
+def _restore(adapter, managed: ManagedAction, applied: AppliedChange) -> AdapterOperationResult:
+    """Undo through the site's own record of the change when it keeps one.
+
+    Otherwise write the previous title back. For an adapter whose title is an
+    override on top of a template, that would pin the old rendered text in
+    place for good, so such adapters declare exact_rollback.
+    """
+    if getattr(adapter, "exact_rollback", False) and applied.change_id:
+        return adapter.rollback_change(
+            request=AdapterRollbackRequest(
+                site_id=managed.site_id,
+                normalized_url=managed.action.normalized_url,
+                change_id=applied.change_id,
+                idempotency_key=f"rollback:{managed.action_id}",
+            )
+        )
+    return adapter.update_title(
+        site_id=managed.site_id,
+        normalized_url=managed.action.normalized_url,
+        new_title=applied.previous_value,
+        idempotency_key=f"rollback:{managed.action_id}",
+    )
 
 
 def _read(adapter, managed: ManagedAction):

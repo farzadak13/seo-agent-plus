@@ -3,6 +3,7 @@ from app.models.execution import ExecutionCapability
 from app.models.rest_adapter import RESTAdapterConfig
 from app.models.wordpress_adapter import WordPressAdapterConfig
 from app.site_adapters.generic_rest import GenericRESTSiteAdapter
+from app.site_adapters.hoshyarseo import HoshyarConnectorAdapter, HoshyarConnectorConfig
 from app.site_adapters.wordpress import WordPressSiteAdapter
 
 
@@ -32,6 +33,10 @@ class SiteAdapterFactory:
         self.register("generic_rest", RESTAdapterConfig, GenericRESTSiteAdapter,
                       secret_fields={"authorization_token"})
         self.register("wordpress", WordPressAdapterConfig, WordPressSiteAdapter,
+                      secret_fields={"username", "application_password"})
+        # WordPress with the HoshyarSEO Connector plugin: changes the <title>
+        # Google shows, not the post's H1. The one to use for customers.
+        self.register("hoshyarseo", HoshyarConnectorConfig, HoshyarConnectorAdapter,
                       secret_fields={"username", "application_password"})
 
     def register(self, adapter_type, config_model, builder, *, secret_fields=()):
