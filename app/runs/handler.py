@@ -7,7 +7,10 @@ from app.observability.lifecycle import lifecycle_span
 from app.models.observability import ObservabilityEventType
 from typing import Any, Callable
 
+from app.action.approval import propose_title_change
+from app.action.store import ManagedActionStore
 from app.models.runs import SEORunStatus
+from app.models.title_proposal import TitleProposalStatus
 from app.onboarding.site_store import SiteStore
 from app.runs.service import SEORunService
 from app.runs.store import RunStore
@@ -23,6 +26,7 @@ def build_seo_run_handler(
     run_store: RunStore,
     run_service: SEORunService,
     title_workflow: TitleRecommendationWorkflow | None = None,
+    action_store: ManagedActionStore | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Build the scheduler handler that connects Jobs to the SEO run service."""
 
@@ -58,11 +62,22 @@ def build_seo_run_handler(
                     strategy=result.strategy,
                 )
 
+            pending_action = None
+            if action_store is not None and title_proposal is not None:
+                pending_action = _queue_for_approval(
+                    action_store=action_store,
+                    run=run,
+                    action=getattr(result, "action", None),
+                    proposal=title_proposal,
+                )
+
             run_result = result.model_dump(mode="json")
             if title_proposal is not None:
                 run_result["title_proposal_id"] = title_proposal.proposal_id
                 run_result["title_proposal_status"] = title_proposal.status.value
                 run_result["title_selected_title"] = title_proposal.selected_title
+            if pending_action is not None:
+                run_result["action_id"] = pending_action.action_id
 
             completed = running.complete(
                 result=run_result
@@ -77,6 +92,8 @@ def build_seo_run_handler(
                 response["title_proposal_id"] = title_proposal.proposal_id
                 response["title_proposal_status"] = title_proposal.status.value
                 response["title_selected_title"] = title_proposal.selected_title
+            if pending_action is not None:
+                response["action_id"] = pending_action.action_id
             return response
         except Exception as exc:
             failed = running.fail(str(exc))
@@ -95,3 +112,25 @@ def build_seo_run_handler(
                 return handler(payload)
 
     return observed_handler
+
+
+def _queue_for_approval(*, action_store, run, action, proposal):
+    """Stage 37: a completed title proposal waits for a person, never for nothing.
+
+    Idempotent: a run delivered twice proposes once.
+    """
+    if action is None or proposal.status != TitleProposalStatus.COMPLETED:
+        return None
+    managed = propose_title_change(
+        action=action,
+        run_id=run.run_id,
+        tenant_id=run.principal_id,
+        proposal_id=proposal.proposal_id,
+        proposed_title=proposal.selected_title,
+        current_title=proposal.investigation.target_title,
+        provider_id=proposal.provider_id,
+    )
+    existing = action_store.find(managed.action_id)
+    if existing is not None:
+        return existing
+    return action_store.create(managed)

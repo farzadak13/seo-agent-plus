@@ -27,18 +27,23 @@ ALLOWED_TRANSITIONS: dict[
         ActionStatus.FAILED,
         ActionStatus.ROLLED_BACK,
     },
+    # A customer can undo a change while it is still being watched; waiting
+    # for the outcome is not a reason to keep a title they no longer want.
     ActionStatus.WAITING_FOR_RECRAWL: {
         ActionStatus.MEASUREMENT_WINDOW_ACTIVE,
         ActionStatus.FAILED,
+        ActionStatus.ROLLED_BACK,
     },
     ActionStatus.MEASUREMENT_WINDOW_ACTIVE: {
         ActionStatus.EVALUATING,
         ActionStatus.FAILED,
+        ActionStatus.ROLLED_BACK,
     },
     ActionStatus.EVALUATING: {
         ActionStatus.SUCCEEDED,
         ActionStatus.FAILED,
         ActionStatus.INCONCLUSIVE,
+        ActionStatus.ROLLED_BACK,
     },
     ActionStatus.FAILED: {
         ActionStatus.ROLLED_BACK,

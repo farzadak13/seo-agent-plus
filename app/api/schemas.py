@@ -186,3 +186,91 @@ class AvailableGSCPropertiesResponse(BaseModel):
                 for item in properties
             ]
         )
+
+
+class ApproveActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Optional: approve a reviewer's edit in place of the proposed title.
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class ActionDecisionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class ActionEventResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    at: datetime
+    status: str
+    actor: str
+    reason: str
+    detail: dict[str, Any]
+
+
+class AppliedChangeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    adapter_id: str
+    change_id: str | None
+    previous_value: str
+    new_value: str
+    applied_at: datetime
+
+
+class ActionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str
+    site_id: str
+    run_id: str
+    proposal_id: str | None
+    action_type: str
+    status: str
+    normalized_url: str
+    normalized_query: str
+    current_title: str | None
+    proposed_title: str | None
+    edited_by_reviewer: bool
+    applied: AppliedChangeResponse | None
+    rolled_back: AppliedChangeResponse | None
+    error: str | None
+    history: list[ActionEventResponse]
+    created_at: datetime
+    updated_at: datetime
+    job_id: str | None = None
+
+    @classmethod
+    def from_managed(cls, managed, *, job_id: str | None = None):
+        action = managed.action
+        return cls(
+            action_id=action.action_id,
+            site_id=action.site_id,
+            run_id=managed.run_id,
+            proposal_id=managed.proposal_id,
+            action_type=action.action_type.value,
+            status=action.status.value,
+            normalized_url=action.normalized_url,
+            normalized_query=action.normalized_query,
+            current_title=managed.observed_value,
+            proposed_title=action.parameters.get("recommended_title"),
+            edited_by_reviewer=bool(action.parameters.get("edited_by_reviewer")),
+            applied=managed.applied.model_dump() if managed.applied else None,
+            rolled_back=managed.rolled_back.model_dump() if managed.rolled_back else None,
+            error=managed.error,
+            history=[event.model_dump(mode="json") for event in managed.history],
+            created_at=managed.created_at,
+            updated_at=managed.updated_at,
+            job_id=job_id,
+        )
+
+
+class ActionListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    actions: list[ActionResponse]
+    next_cursor: str | None

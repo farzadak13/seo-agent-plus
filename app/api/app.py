@@ -10,7 +10,14 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api.auth import APIKeyAuthenticator
+from app.action.approval import ApprovalError, approve, check_rollback, reject
+from app.action.executor import EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE
+from app.action.store import ManagedActionStore
 from app.api.schemas import (
+    ActionDecisionRequest,
+    ActionListResponse,
+    ActionResponse,
+    ApproveActionRequest,
     AvailableGSCPropertiesRequest,
     AvailableGSCPropertiesResponse,
     ConfigureGSCRequest,
@@ -33,9 +40,14 @@ from app.models.sites import (
     SiteAdapterConnection,
 )
 from app.onboarding.site_store import SiteStore
-from app.persistence.contracts import PersistenceNotFoundError
+from app.persistence.contracts import InvalidCursorError, PersistenceNotFoundError
 from app.runs.handler import SEO_RUN_JOB_TYPE
 from app.runs.store import RunStore
+
+
+RESERVED_JOB_TYPES = frozenset(
+    {SEO_RUN_JOB_TYPE, EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE}
+)
 
 
 class APIDependencies:
@@ -52,7 +64,9 @@ class APIDependencies:
         transaction_factory=None,
         adapter_factory=None,
         gsc_property_lister=None,
+        action_store: ManagedActionStore | None = None,
     ) -> None:
+        self.action_store = action_store
         self.transaction_factory = transaction_factory or nullcontext
         self.adapter_factory = adapter_factory
         # None means we cannot ask Google which properties exist (stub mode).
@@ -91,6 +105,13 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         request: CreateJobRequest,
         authenticated_principal_id: str = Depends(principal_id),
     ) -> JobResponse:
+        if request.job_type.strip() in RESERVED_JOB_TYPES:
+            # These act on a stored run or action named in the payload. Their
+            # own endpoints check who owns it; a raw job would not.
+            raise HTTPException(
+                status_code=422,
+                detail="This job type is created through its own endpoint only.",
+            )
         job = Job(
             job_id=dependencies.job_id_factory(),
             job_type=request.job_type,
@@ -360,7 +381,161 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         _ensure_owner(run.principal_id, authenticated_principal_id)
         return RunResponse.from_run(run)
 
+    # Stage 37 — nothing reaches a customer's site without a person saying yes.
+
+    @app.get("/v1/sites/{site_id}/actions", response_model=ActionListResponse)
+    def list_actions(
+        site_id: str,
+        limit: int = 50,
+        cursor: str | None = None,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> ActionListResponse:
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, authenticated_principal_id)
+        store = _require_action_store(dependencies)
+        try:
+            actions, next_cursor = store.query(
+                tenant_id=authenticated_principal_id,
+                site_id=site_id,
+                limit=max(1, min(limit, 200)),
+                cursor=cursor,
+            )
+        except InvalidCursorError as exc:
+            raise HTTPException(status_code=422, detail="Invalid cursor.") from exc
+        return ActionListResponse(
+            actions=[ActionResponse.from_managed(item) for item in actions],
+            next_cursor=next_cursor,
+        )
+
+    @app.get("/v1/actions/{action_id}", response_model=ActionResponse)
+    def get_action(
+        action_id: str,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> ActionResponse:
+        managed = _get_action(dependencies, action_id)
+        _ensure_owner(managed.tenant_id, authenticated_principal_id)
+        return ActionResponse.from_managed(managed)
+
+    @app.post(
+        "/v1/actions/{action_id}/approve",
+        response_model=ActionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def approve_action(
+        action_id: str,
+        request: ApproveActionRequest,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> ActionResponse:
+        managed = _get_action(dependencies, action_id)
+        _ensure_owner(managed.tenant_id, authenticated_principal_id)
+        site = _get_site(dependencies, managed.site_id)
+        if site.site_adapter is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Connect the site (PUT /v1/sites/{site_id}/connections/site-adapter) before approving changes to it.",
+            )
+        try:
+            approved = approve(
+                managed,
+                actor=authenticated_principal_id,
+                title=request.title,
+                note=request.note,
+            )
+        except ApprovalError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        job = _action_job(dependencies, EXECUTE_ACTION_JOB_TYPE, approved, authenticated_principal_id)
+        _save_with_job(dependencies, approved, job)
+        return ActionResponse.from_managed(approved, job_id=job.job_id)
+
+    @app.post("/v1/actions/{action_id}/reject", response_model=ActionResponse)
+    def reject_action(
+        action_id: str,
+        request: ActionDecisionRequest,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> ActionResponse:
+        managed = _get_action(dependencies, action_id)
+        _ensure_owner(managed.tenant_id, authenticated_principal_id)
+        try:
+            rejected = reject(managed, actor=authenticated_principal_id, reason=request.reason)
+        except ApprovalError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        _require_action_store(dependencies).update(rejected)
+        return ActionResponse.from_managed(rejected)
+
+    @app.post(
+        "/v1/actions/{action_id}/rollback",
+        response_model=ActionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def rollback_action(
+        action_id: str,
+        request: ActionDecisionRequest,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> ActionResponse:
+        managed = _get_action(dependencies, action_id)
+        _ensure_owner(managed.tenant_id, authenticated_principal_id)
+        try:
+            check_rollback(managed)
+        except ApprovalError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        requested = managed.record(
+            action=managed.action,
+            actor=authenticated_principal_id,
+            reason="rollback_requested",
+            detail={"note": request.reason} if request.reason else {},
+        )
+        job = _action_job(dependencies, ROLLBACK_ACTION_JOB_TYPE, requested, authenticated_principal_id)
+        _save_with_job(dependencies, requested, job)
+        return ActionResponse.from_managed(requested, job_id=job.job_id)
+
     return app
+
+
+def _require_action_store(dependencies: APIDependencies) -> ManagedActionStore:
+    if dependencies.action_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Action approval is not configured.",
+        )
+    return dependencies.action_store
+
+
+def _get_action(dependencies: APIDependencies, action_id: str):
+    store = _require_action_store(dependencies)
+    try:
+        return store.get(action_id)
+    except PersistenceNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Action not found.",
+        ) from exc
+
+
+def _action_job(dependencies: APIDependencies, job_type: str, managed, principal: str) -> Job:
+    return Job(
+        job_id=dependencies.job_id_factory(),
+        job_type=job_type,
+        principal_id=principal,
+        payload={"action_id": managed.action_id, "actor": principal},
+        # A site that is briefly down should not turn an approval into a
+        # failure; the handlers read the page first, so a retry is safe.
+        max_attempts=3,
+    )
+
+
+def _save_with_job(dependencies: APIDependencies, managed, job: Job) -> None:
+    """The decision and the job that carries it out are recorded together or not at all."""
+    try:
+        with dependencies.transaction_factory():
+            _require_action_store(dependencies).update(managed)
+            dependencies.scheduler.store.create(job)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The action changed while this request was being handled; reload and try again.",
+        ) from exc
 
 
 def _require_site_store(dependencies: APIDependencies) -> SiteStore:

@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.action.executor import (
+    EXECUTE_ACTION_JOB_TYPE,
+    ROLLBACK_ACTION_JOB_TYPE,
+    build_execute_action_handler,
+    build_rollback_action_handler,
+)
+from app.action.store import ManagedActionStore
 from app.api.app import APIDependencies, create_app
 from app.api.auth import TenantAPIKeyAuthenticator
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
@@ -39,6 +46,7 @@ class RuntimeContainer:
     observability: ObservabilityContext
     worker: WorkerHandle
     adapters: SiteAdapterFactory
+    action_store: ManagedActionStore
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
 
@@ -57,6 +65,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     run_store = RunStore(repository)
     tenant_store = TenantStore(repository)
     api_key_store = APIKeyStore(repository)
+    action_store = ManagedActionStore(repository)
 
     secret_resolver = EnvironmentSecretResolver()
 
@@ -113,6 +122,20 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             run_store=run_store,
             run_service=run_service,
             title_workflow=title_workflow,
+            action_store=action_store,
+        ),
+    )
+    # Stage 38: approved changes are carried out by the same worker as runs.
+    handlers.register(
+        EXECUTE_ACTION_JOB_TYPE,
+        build_execute_action_handler(
+            action_store=action_store, site_store=site_store, adapter_factory=adapters
+        ),
+    )
+    handlers.register(
+        ROLLBACK_ACTION_JOB_TYPE,
+        build_rollback_action_handler(
+            action_store=action_store, site_store=site_store, adapter_factory=adapters
         ),
     )
 
@@ -139,6 +162,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         observability=observability,
         worker=worker,
         adapters=adapters,
+        action_store=action_store,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
     )
@@ -175,6 +199,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             transaction_factory=container.repository.transaction,
             adapter_factory=container.adapters,
             gsc_property_lister=container.gsc_property_lister,
+            action_store=container.action_store,
         )
     )
     app.router.lifespan_context = lifespan
