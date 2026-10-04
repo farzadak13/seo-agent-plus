@@ -295,6 +295,8 @@ def test_no_raw_byte_order_mark_hides_in_the_adapter_source():
         ("معمولي", Competition.MEDIUM),  # Arabic yeh
         (" زياد ", Competition.HIGH),  # Arabic yeh, stray spaces
         ("كم", Competition.LOW),  # Arabic kaf
+        ("خیلی سخت", Competition.VERY_HIGH),  # the word seen live
+        ("خيلي سخت", Competition.VERY_HIGH),
     ],
 )
 def test_competition_words_match_after_normalisation(word, level):
@@ -334,3 +336,15 @@ def test_an_unreachable_service_is_not_named_to_the_customer():
         requests.post = original
     assert "SEO Signal" not in str(raised.value)
     assert "ConnectionError" in raised.value.detail
+
+
+def test_the_entry_point_configures_logging_with_level_and_source(monkeypatch):
+    import logging
+
+    from app.api import main
+
+    calls = []
+    monkeypatch.setattr(logging, "basicConfig", lambda **kw: calls.append(kw))
+    main.configure_logging()
+    assert calls and calls[0]["level"] == logging.INFO
+    assert "%(levelname)s" in calls[0]["format"] and "%(name)s" in calls[0]["format"]

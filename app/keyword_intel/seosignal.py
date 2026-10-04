@@ -56,6 +56,7 @@ _COMPETITION_WORDS = {
     "زیاد": Competition.HIGH,
     "بالا": Competition.HIGH,
     "سخت": Competition.HIGH,
+    "خیلی سخت": Competition.VERY_HIGH,  # seen live, 2026-10-04
 }
 _COMPETITION = {normalize_query(word): level for word, level in _COMPETITION_WORDS.items()}
 # Each unrecognised word is logged once per process, not once per keyword.

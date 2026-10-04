@@ -20,6 +20,9 @@ class Competition(StrEnum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+    # Seen live from SEO Signal as "خیلی سخت", beside "سخت". Kept apart from
+    # HIGH: the hardest keywords are exactly the ones worth ranking lower.
+    VERY_HIGH = "very_high"
     UNKNOWN = "unknown"
 
 
