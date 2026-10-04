@@ -47,6 +47,16 @@ class RuntimeConfig(BaseModel):
     arvan_model: str | None = None
     arvan_api_key_ref: str | None = Field(default=None, repr=False)
 
+    # Keyword demand and rank tracking. The provider is a setting, not code:
+    # see app.keyword_intel.
+    keyword_provider: str = Field(default="none", pattern=r"^(none|seosignal)$")
+    seosignal_api_key_ref: str | None = Field(default=None, repr=False)
+    # Requests a day for the whole service. The account allows 50; the rest
+    # is left for using the SEO Signal panel by hand without hitting the cap.
+    keyword_daily_budget: int = Field(default=40, ge=0, le=10_000)
+    # Requests a day any one customer can cause, so one cannot spend everyone's.
+    keyword_tenant_daily_budget: int = Field(default=10, ge=0, le=10_000)
+
     @field_validator("api_key")
     @classmethod
     def valid_key(cls, value):
@@ -76,6 +86,14 @@ class RuntimeConfig(BaseModel):
         if self.public_base_url and not self.public_base_url.startswith("https://"):
             if self.environment.strip().lower() == "production":
                 raise ValueError("SEO_AGENT_PUBLIC_BASE_URL must be https in production.")
+        return self
+
+    @model_validator(mode="after")
+    def keyword_provider_is_fully_configured(self):
+        if self.keyword_provider == "seosignal" and not self.seosignal_api_key_ref:
+            raise ValueError(
+                "SEO_AGENT_SEOSIGNAL_API_KEY_REF is required when SEO_AGENT_KEYWORD_PROVIDER is 'seosignal'."
+            )
         return self
 
     @property
@@ -160,6 +178,10 @@ class RuntimeConfig(BaseModel):
             google_oauth_client_id=_env_optional("SEO_AGENT_GOOGLE_OAUTH_CLIENT_ID"),
             google_oauth_client_secret=_env_optional("SEO_AGENT_GOOGLE_OAUTH_CLIENT_SECRET"),
             public_base_url=_env_optional("SEO_AGENT_PUBLIC_BASE_URL"),
+            keyword_provider=os.getenv("SEO_AGENT_KEYWORD_PROVIDER", "none").strip().lower() or "none",
+            seosignal_api_key_ref=_env_optional("SEO_AGENT_SEOSIGNAL_API_KEY_REF"),
+            keyword_daily_budget=int(os.getenv("SEO_AGENT_KEYWORD_DAILY_BUDGET", "40")),
+            keyword_tenant_daily_budget=int(os.getenv("SEO_AGENT_KEYWORD_TENANT_DAILY_BUDGET", "10")),
         )
 
 

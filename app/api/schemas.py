@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
@@ -284,3 +284,12 @@ class ActionListResponse(BaseModel):
 
     actions: list[ActionResponse]
     next_cursor: str | None
+
+
+class KeywordVolumeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Each keyword becomes a cache key and is sent to the provider: bounded.
+    keywords: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
+        min_length=1, max_length=200
+    )

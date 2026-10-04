@@ -318,3 +318,21 @@ def test_another_site_cannot_press_continue_for_the_customer():
     pressed = press_continue(client, state_of(link), **{"sec-fetch-site": "cross-site"})
     assert pressed.status_code == 400
     assert "set-cookie" not in pressed.headers
+
+
+def test_with_google_too_a_site_holds_only_its_own_domains_property():
+    from app.gsc.properties import GSCProperty
+
+    client, sites, _ = api_client()
+    connect_google(client)
+    # The customer's Google can see mysite.ir, but this site is tennisino.com.
+    client.app.state.dependencies.gsc_property_lister = lambda **_: [
+        GSCProperty("sc-domain:mysite.ir", "siteOwner")
+    ]
+    response = client.put(
+        "/v1/sites/s1/connections/gsc",
+        headers=AUTH,
+        json={"property_url": "sc-domain:mysite.ir", "use_google_account": True},
+    )
+    assert response.status_code == 422
+    assert sites.get("s1").gsc is None

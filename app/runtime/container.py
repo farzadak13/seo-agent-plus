@@ -15,6 +15,7 @@ from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.observability import InMemoryEventSink, InMemoryMetricsSink, ObservabilityContext
 from app.onboarding.secrets import EnvironmentSecretResolver
 from app.onboarding.google_oauth import GoogleOAuthConfig, GoogleOAuthService
+from app.runtime.keywords import KeywordIntel, build_keyword_intel
 from app.onboarding.ownership import OwnershipVerifier
 from app.onboarding.vault import CompositeSecretResolver, Keyring, SecretVault
 from app.onboarding.site_store import SiteStore
@@ -52,6 +53,7 @@ class RuntimeContainer:
     action_store: ManagedActionStore
     vault: SecretVault | None = None
     google_oauth: GoogleOAuthService | None = None
+    keywords: KeywordIntel | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
 
@@ -110,6 +112,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             config, secret_resolver=secret_resolver, transport=transport
         )
     adapters = SiteAdapterFactory(secret_resolver)
+    keywords = build_keyword_intel(config, repository=repository, secret_resolver=secret_resolver)
 
     google_oauth = None
     if config.google_sign_in_enabled:
@@ -189,6 +192,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         action_store=action_store,
         vault=vault,
         google_oauth=google_oauth,
+        keywords=keywords,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
     )
@@ -229,6 +233,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             vault=container.vault,
             ownership_verifier=OwnershipVerifier(adapter_factory=container.adapters),
             google_oauth=container.google_oauth,
+            keywords=container.keywords,
             tenant_name=lambda tenant_id: getattr(
                 container.tenant_store.find(tenant_id), "name", tenant_id
             ),
