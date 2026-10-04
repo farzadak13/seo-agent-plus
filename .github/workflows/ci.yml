@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        # 3.12 is what the Ubuntu 24.04 server runs; 3.14 is the development
+        # machine. A pass on one says nothing about the other.
+        python-version: ["3.12", "3.14"]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: seoagent
+          POSTGRES_PASSWORD: seoagent_ci
+          POSTGRES_DB: seoagent_test
+          LANG: C.UTF-8
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U seoagent -d seoagent_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    env:
+      SEO_AGENT_TEST_DSN: postgresql://seoagent:seoagent_ci@127.0.0.1:5432/seoagent_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . "pytest>=9,<10"
+
+      - name: unit tests
+        run: python -m pytest -q -m "not integration"
+
+      - name: migrations apply to an empty database and are idempotent
+        env:
+          SEO_AGENT_DATABASE_DSN: ${{ env.SEO_AGENT_TEST_DSN }}
+        run: |
+          python -m app.migrate
+          python -m app.migrate
+
+      # The live database tests skip themselves when the database is missing,
+      # which is right on a laptop and wrong here: a skipped run would read as
+      # a pass. Any skip in this step fails the build.
+      - name: integration tests against PostgreSQL
+        run: |
+          set -o pipefail
+          python -m pytest -q -rs -m integration \
+            tests/integration/test_postgres_live.py \
+            tests/integration/test_runtime_live.py | tee integration.log
+          if grep -qi "skipped" integration.log; then
+            echo "Live database tests were skipped; the database is not reachable." >&2
+            exit 1
+          fi
