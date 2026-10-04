@@ -18,7 +18,7 @@ from app.action.approval import ApprovalError, approve, check_rollback, reject
 from app.action.executor import EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE
 from app.action.store import ActionChangedError, ManagedActionStore
 from app.keyword_intel.contracts import KeywordProviderError
-from app.models.keyword_intel import Device, RankHistory, VolumeLookup
+from app.models.keyword_intel import VolumeLookup
 from app.api.schemas import (
     KeywordVolumeRequest,
     ActionDecisionRequest,
@@ -50,7 +50,11 @@ from app.onboarding.ownership import meta_tag as ownership_meta_tag
 from app.onboarding.ownership import new_token as new_ownership_token
 from app.onboarding.google_oauth import BEGIN_PATH, CALLBACK_PATH, OAuthError, tenant_credential_ref
 from app.onboarding.google_oauth import COOKIE_NAME as OAUTH_COOKIE
-from app.onboarding.ownership import credential_is_shared, property_matches_site
+from app.onboarding.ownership import (
+    credential_is_shared,
+    property_covers_site,
+    property_matches_site,
+)
 from app.onboarding.site_store import SiteStore
 from app.persistence.contracts import (
     InvalidCursorError,
@@ -286,12 +290,18 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             dependencies, request, authenticated_principal_id
         )
         shared = _require_ownership_for_shared_credential(site, credential)
-        # Whatever the credential: a site carries only its own domain's
-        # property. With a customer's own Google grant the data is theirs to
-        # read, but a site named after someone else's domain, holding the
-        # customer's own property, would otherwise count as "proven" for that
-        # other domain (its rankings, for one).
-        if not property_matches_site(request.property_url, str(site.base_url)):
+        # Whatever the credential, a site carries only a property that covers
+        # its own domain: never a site named after one domain holding another
+        # domain's property. With the shared account the property must be
+        # exactly the site's own. With the customer's own Google sign-in a
+        # domain property covering a subdomain site (sc-domain:example.com
+        # for shop.example.com) is allowed: Google has said the data is theirs.
+        fits = (
+            property_matches_site(request.property_url, str(site.base_url))
+            if shared
+            else property_covers_site(request.property_url, str(site.base_url))
+        )
+        if not fits:
             raise HTTPException(
                 status_code=422,
                 detail="The property must be this site's own domain.",
@@ -419,7 +429,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             saved = _require_site_store(dependencies).update(updated)
         return SiteResponse.from_site(saved)
 
-    # Keyword demand and rank tracking, provider-neutral (app.keyword_intel).
+    # Keyword demand, provider-neutral (app.keyword_intel).
 
     @app.post("/v1/keywords/volume", response_model=VolumeLookup)
     def keyword_volume(
@@ -431,44 +441,6 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             return keywords.volumes_for(authenticated_principal_id).lookup(request.keywords)
         except KeywordProviderError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-
-    @app.get("/v1/sites/{site_id}/rankings", response_model=RankHistory)
-    def site_rankings(
-        site_id: str,
-        device: Device = Device.MOBILE,
-        days: int = 30,
-        authenticated_principal_id: str = Depends(principal_id),
-    ) -> RankHistory:
-        keywords = _require_keywords(dependencies)
-        site = _get_site(dependencies, site_id)
-        _ensure_owner(site.principal_id, authenticated_principal_id)
-        # Rank projects live in the operator's provider account, shared by
-        # every customer. A site's rankings are shown only once the customer
-        # has proved the domain is theirs, and only for that domain.
-        proven = site.ownership_verified_at is not None or (
-            site.gsc is not None
-            and not credential_is_shared(site.gsc.credential_ref)
-            # The Google grant proves the property is theirs, so it proves
-            # this site only when the property is this site's own domain.
-            and property_matches_site(site.gsc.property_url, str(site.base_url))
-        )
-        if not proven:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Connect Search Console with Google, or prove ownership, to see rankings.",
-            )
-        if not 1 <= days <= 90:
-            raise HTTPException(status_code=422, detail="days must be between 1 and 90.")
-        try:
-            history = keywords.rankings_for_site(str(site.base_url), device=device, days=days)
-        except KeywordProviderError as exc:
-            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
-        if history is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No rank-tracking project is set up for this domain yet.",
-            )
-        return history
 
     @app.get("/v1/sites/{site_id}/capabilities")
     def site_capabilities(site_id: str, authenticated_principal_id: str = Depends(principal_id)):

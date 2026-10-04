@@ -2,7 +2,7 @@
 #
 # Does the SEO Signal key work? Run before turning SEO_AGENT_KEYWORD_PROVIDER on.
 #
-#   sudo bash check-seosignal.sh                  projects only, costs nothing
+#   sudo bash check-seosignal.sh                  key check only, asks no keyword
 #   sudo bash check-seosignal.sh @/path/word.txt  plus one volume lookup
 #
 # A Persian keyword is read from a file ('@path'), never typed on the command

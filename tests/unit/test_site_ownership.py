@@ -409,3 +409,19 @@ def test_one_private_address_among_public_ones_refuses_them_all(monkeypatch):
     )
     with pytest.raises(UnsafeAddressError):
         ensure_public_url("http://mixed.example/")
+
+
+@pytest.mark.parametrize(
+    "prop, site, expected",
+    [
+        ("sc-domain:tennisino.com", "https://shop.tennisino.com/", True),
+        ("sc-domain:tennisino.com", "https://tennisino.com/", True),
+        ("sc-domain:tennisino.com", "https://nottennisino.com/", False),
+        ("sc-domain:tennisino.com", "https://tennisino.com.evil.io/", False),
+        ("https://tennisino.com/", "https://shop.tennisino.com/", False),
+    ],
+)
+def test_which_domain_property_covers_which_site(prop, site, expected):
+    from app.onboarding.ownership import property_covers_site
+
+    assert property_covers_site(prop, site) is expected

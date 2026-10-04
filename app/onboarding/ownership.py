@@ -67,6 +67,24 @@ def property_matches_site(property_url: str, site_url: str) -> bool:
     return _bare_host(property_url) == site_host
 
 
+def property_covers_site(property_url: str, site_url: str) -> bool:
+    """Does this property include the site's data, possibly with more?
+
+    Looser than property_matches_site: a domain property also covers each of
+    its subdomains. Right only where Google itself has said the person may
+    read the property (their own sign-in), so the wider data is theirs too;
+    with the shared account it would hand over a whole domain on the strength
+    of one subdomain.
+    """
+    if property_matches_site(property_url, site_url):
+        return True
+    if not property_url.startswith("sc-domain:"):
+        return False
+    domain = property_url[len("sc-domain:"):].lower().rstrip(".")
+    site_host = (urlparse(site_url).hostname or "").lower().rstrip(".")
+    return bool(domain) and site_host.endswith("." + domain)
+
+
 class _MetaFinder(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)

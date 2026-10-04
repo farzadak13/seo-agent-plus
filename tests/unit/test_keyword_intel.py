@@ -1,30 +1,33 @@
-"""SEO Signal behind provider-neutral ports, with a cache and a daily budget."""
-from datetime import date, datetime, timedelta, timezone
+"""SEO Signal search volume behind a provider-neutral port, with a cache and a daily budget."""
+import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.keyword_intel.cache import CachedRankTracker, CachedSearchVolume, RequestBudget
+from app.keyword_intel.cache import CachedSearchVolume, RequestBudget
 from app.keyword_intel.contracts import (
     BudgetExhaustedError,
+    KeywordProviderError,
     ProviderAuthError,
     ProviderPlanError,
     ProviderQuotaError,
     ProviderUnavailableError,
 )
-from app.keyword_intel.seosignal import (
-    SeoSignalClient,
-    SeoSignalRankTracker,
-    SeoSignalSearchVolume,
-)
-from app.models.keyword_intel import Competition, Device
+from app.keyword_intel.seosignal import RawResponse, SeoSignalClient, SeoSignalSearchVolume, parse_body
+from app.models.keyword_intel import Competition
 from app.persistence.memory import InMemoryRepository
 
 
 NOW = datetime(2026, 10, 4, 9, 0, tzinfo=timezone.utc)  # 12:30 in Tehran
+BOM = "﻿﻿"  # what the live service puts in front of its JSON
+
+
+def answer(status, body):
+    return RawResponse(status, BOM + json.dumps(body, ensure_ascii=False))
 
 
 class FakeSeoSignal:
-    """Answers like the documented API, and counts what it was asked."""
+    """Answers like the live API, byte-order marks included, and counts calls."""
 
     def __init__(self):
         self.calls = []
@@ -37,37 +40,21 @@ class FakeSeoSignal:
         if self.fail_with:
             return self.fail_with
         if headers.get("X-Api-Key") != "user@example.com:token":
-            return 401, {"error": {"code": "INVALID_API_KEY", "message": "..."}}
+            return answer(401, {"error": {"code": "INVALID_API_KEY", "message": "..."}})
         if endpoint == "keyword-research-bulk":
+            if not body["keywords"]:
+                return answer(400, {"error": {"code": "INVALID_PARAMS", "message": "..."}})
             rows = [
                 {"Word": word, "SearchVolume": volume, "Competition": level}
                 for word, (volume, level) in self.volumes.items()
                 if word in body["keywords"]
             ]
-            return 200, {"ok": True, "data": {"keywordList": rows, "All": len(body["keywords"])}}
-        if endpoint == "ranktracker-projects":
-            return 200, {"ok": True, "data": {"List": [
-                {"Id": 37113, "Name": "تنیسینو", "MainDomain": "tennisino.com", "IsActive": True}
-            ]}}
-        if endpoint == "ranktracker-project-detail":
-            return 200, {"ok": True, "data": {
-                "name": "تنیسینو", "main_domain": "tennisino.com", "keywords": ["راکت تنیس"],
-                "competitor_domains": ["rival.ir"], "location": "تهران", "country_code": "IR",
-                "mobile_id": 87, "desktop_id": 88,
-            }}
-        if endpoint == "ranktracker-rank-history":
-            return 200, {"ok": True, "data": {
-                "domain": "tennisino.com", "device_id": body["device_id"],
-                "keywords": [{
-                    "keyword": "راکت تنیس", "search_volume": 900, "target_url": None,
-                    "history": [{"date": "2026-09-29", "rank": 4}, {"date": "2026-09-28", "rank": 0}],
-                }],
-            }}
-        return 404, None
+            return answer(200, {"ok": True, "data": {"keywordList": rows, "All": len(body["keywords"])}})
+        return RawResponse(404, "")
 
 
-def client(fake):
-    return SeoSignalClient(api_key="user@example.com:token", transport=fake)
+def client(fake, key="user@example.com:token"):
+    return SeoSignalClient(api_key=key, transport=fake)
 
 
 def cached_volumes(fake, *, limit=45, clock=lambda: NOW, repository=None):
@@ -80,14 +67,19 @@ def cached_volumes(fake, *, limit=45, clock=lambda: NOW, repository=None):
 # ---- the adapter -----------------------------------------------------------
 
 
+def test_the_byte_order_marks_in_front_of_the_json_are_not_mistaken_for_no_answer():
+    # The bug the first live check found: every answer read as unparseable.
+    assert parse_body(BOM + '{"ok": true, "data": 1}') == {"ok": True, "data": 1}
+
+
 def test_volumes_come_back_in_our_terms_one_per_keyword_asked():
     fake = FakeSeoSignal()
     volumes = SeoSignalSearchVolume(client(fake), clock=lambda: NOW).search_volumes(
         ["کفش مردانه", "کلمه بی‌داده"]
     )
-    assert [(v.keyword, v.search_volume, v.competition) for v in volumes] == [
-        ("کفش مردانه", 12000, Competition.MEDIUM),
-        ("کلمه بی‌داده", None, Competition.UNKNOWN),
+    assert [(v.keyword, v.search_volume, v.competition, v.confirmed) for v in volumes] == [
+        ("کفش مردانه", 12000, Competition.MEDIUM, True),
+        ("کلمه بی‌داده", None, Competition.UNKNOWN, True),
     ]
     assert fake.calls[0][0] == "keyword-research-bulk"
 
@@ -96,61 +88,53 @@ def test_arabic_and_persian_letters_are_the_same_keyword():
     fake = FakeSeoSignal()
     [volume] = SeoSignalSearchVolume(client(fake), clock=lambda: NOW).search_volumes(["كفش مردانه"])
     assert volume.search_volume == 12000
+    assert fake.calls[0][1]["keywords"] == ["کفش مردانه"], "sent with Persian letters"
 
 
 @pytest.mark.parametrize(
-    "answer, error",
+    "response, error",
     [
-        ((401, {"error": {"code": "INVALID_API_KEY"}}), ProviderAuthError),
-        ((403, {"error": {"code": "ACCOUNT_DISABLED"}}), ProviderAuthError),
-        ((403, {"error": {"code": "PLAN_NOT_ALLOWED"}}), ProviderPlanError),
-        ((429, {"error": {"code": "RATE_LIMIT_EXCEEDED", "limit": 50, "used": 50}}), ProviderQuotaError),
-        ((502, None), ProviderUnavailableError),
+        (answer(401, {"error": {"code": "INVALID_API_KEY"}}), ProviderAuthError),
+        (answer(403, {"error": {"code": "ACCOUNT_DISABLED"}}), ProviderAuthError),
+        (answer(403, {"error": {"code": "PLAN_NOT_ALLOWED"}}), ProviderPlanError),
+        (answer(429, {"error": {"code": "RATE_LIMIT_EXCEEDED", "limit": 50, "used": 50}}), ProviderQuotaError),
+        (answer(502, {"error": {"code": "SOMETHING"}}), ProviderUnavailableError),
     ],
 )
-def test_provider_errors_become_ours(answer, error):
+def test_provider_errors_become_ours(response, error):
     fake = FakeSeoSignal()
-    fake.fail_with = answer
+    fake.fail_with = response
     with pytest.raises(error):
         SeoSignalSearchVolume(client(fake)).search_volumes(["x"])
 
 
-def test_no_data_at_all_is_an_answer_not_an_error():
+def test_an_answer_of_unexpected_shape_says_what_came_back():
     fake = FakeSeoSignal()
-    fake.fail_with = (422, {"error": {"code": "REQUEST_FAILED"}})
+    fake.fail_with = RawResponse(200, "<html>maintenance</html>")
+    with pytest.raises(KeywordProviderError, match="maintenance"):
+        SeoSignalSearchVolume(client(fake)).search_volumes(["x"])
+
+
+def test_the_key_check_asks_no_keyword():
+    fake = FakeSeoSignal()
+    SeoSignalSearchVolume(client(fake)).check_key()
+    assert fake.calls[0][1] == {"keywords": []}
+
+
+def test_the_key_check_names_a_refused_key():
+    with pytest.raises(ProviderAuthError):
+        SeoSignalSearchVolume(client(FakeSeoSignal(), key="wrong")).check_key()
+
+
+def test_nothing_found_for_the_whole_request_is_an_unconfirmed_answer():
+    fake = FakeSeoSignal()
+    fake.fail_with = answer(422, {"error": {"code": "REQUEST_FAILED"}})
     [volume] = SeoSignalSearchVolume(client(fake), clock=lambda: NOW).search_volumes(["x"])
-    assert volume.search_volume is None
+    assert volume.search_volume is None and volume.confirmed is False
 
 
 def test_the_key_never_appears_in_repr():
     assert "token" not in repr(client(FakeSeoSignal()))
-
-
-def test_rank_projects_and_history_in_our_terms():
-    tracker = SeoSignalRankTracker(client(FakeSeoSignal()), clock=lambda: NOW)
-    [summary] = tracker.projects()
-    assert (summary.project_id, summary.domain) == ("37113", "tennisino.com")
-
-    project = tracker.project("37113")
-    assert project.devices == [Device.MOBILE, Device.DESKTOP]
-    assert project.competitor_domains == ["rival.ir"]
-
-    history = tracker.rank_history(
-        project_id="37113", device=Device.DESKTOP, start=date(2026, 9, 28), end=date(2026, 9, 29)
-    )
-    [keyword] = history.keywords
-    assert [(p.date.isoformat(), p.rank) for p in keyword.points] == [
-        ("2026-09-28", None),  # 0 means not found that day
-        ("2026-09-29", 4),
-    ]
-
-
-def test_rank_history_is_limited_to_the_providers_window():
-    tracker = SeoSignalRankTracker(client(FakeSeoSignal()))
-    with pytest.raises(ValueError):
-        tracker.rank_history(
-            project_id="37113", device=Device.MOBILE, start=date(2026, 1, 1), end=date(2026, 9, 1)
-        )
 
 
 # ---- cache and budget ------------------------------------------------------
@@ -176,6 +160,24 @@ def test_no_data_is_remembered_too():
     service.lookup(["کلمه بی‌داده"])
     again = service.lookup(["کلمه بی‌داده"])
     assert again.requests_made == 0 and again.volumes[0].search_volume is None
+
+
+def test_an_unconfirmed_nothing_is_kept_a_day_not_a_month():
+    fake = FakeSeoSignal()
+    fake.fail_with = answer(422, {"error": {"code": "REQUEST_FAILED"}})
+    repository = InMemoryRepository()
+    cached_volumes(fake, repository=repository)[0].lookup(["کفش مردانه"])
+    fake.fail_with = None
+
+    same_day = NOW + timedelta(hours=20)
+    assert cached_volumes(fake, repository=repository, clock=lambda: same_day)[0].lookup(
+        ["کفش مردانه"]
+    ).requests_made == 0
+
+    next_day = NOW + timedelta(hours=25)
+    refreshed = cached_volumes(fake, repository=repository, clock=lambda: next_day)[0].lookup(["کفش مردانه"])
+    assert refreshed.requests_made == 1
+    assert refreshed.volumes[0].search_volume == 12000
 
 
 def test_only_the_missing_keywords_are_sent():
@@ -233,7 +235,7 @@ def test_out_of_budget_an_older_answer_is_better_than_none():
 
 def test_when_the_provider_says_the_day_is_spent_we_stop_asking():
     fake = FakeSeoSignal()
-    fake.fail_with = (429, {"error": {"code": "RATE_LIMIT_EXCEEDED"}})
+    fake.fail_with = answer(429, {"error": {"code": "RATE_LIMIT_EXCEEDED"}})
     service, budget, _ = cached_volumes(fake)
 
     result = service.lookup(["کفش مردانه"])
@@ -252,23 +254,3 @@ def test_the_budget_resets_at_midnight_tehran_time():
     with pytest.raises(BudgetExhaustedError):
         RequestBudget(repository, scope="s", daily_limit=1, clock=lambda: before).consume()
     RequestBudget(repository, scope="s", daily_limit=1, clock=lambda: after).consume()
-
-
-def test_rank_history_is_cached_for_a_few_hours():
-    fake = FakeSeoSignal()
-    repository = InMemoryRepository()
-    times = {"now": NOW}
-    tracker = CachedRankTracker(
-        SeoSignalRankTracker(client(fake), clock=lambda: times["now"]), repository,
-        clock=lambda: times["now"],
-    )
-    args = dict(project_id="37113", device=Device.MOBILE, start=date(2026, 9, 28), end=date(2026, 9, 29))
-
-    tracker.rank_history(**args)
-    calls_after_first = len(fake.calls)
-    tracker.rank_history(**args)
-    assert len(fake.calls) == calls_after_first
-
-    times["now"] = NOW + timedelta(hours=7)
-    tracker.rank_history(**args)
-    assert len(fake.calls) > calls_after_first

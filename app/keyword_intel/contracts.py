@@ -1,21 +1,10 @@
-"""The ports the rest of the system depends on. Adapters implement them.
-
-Two narrow interfaces rather than one wide one: a provider may offer only
-search volume, or only rank tracking, and a future one may offer both.
-"""
+"""The port the rest of the system depends on. Adapters implement it."""
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date
 from typing import Protocol
 
-from app.models.keyword_intel import (
-    Device,
-    KeywordVolume,
-    RankHistory,
-    RankProject,
-    RankProjectSummary,
-)
+from app.models.keyword_intel import KeywordVolume
 
 
 class KeywordProviderError(RuntimeError):
@@ -58,22 +47,3 @@ class SearchVolumeProvider(Protocol):
         the provider has no data for comes back with ``search_volume=None``.
         """
         ...
-
-
-class RankTrackerProvider(Protocol):
-    @property
-    def provider_id(self) -> str: ...
-
-    def projects(self) -> list[RankProjectSummary]: ...
-
-    def project(self, project_id: str) -> RankProject: ...
-
-    def rank_history(
-        self,
-        *,
-        project_id: str,
-        device: Device,
-        start: date,
-        end: date,
-        domain: str | None = None,
-    ) -> RankHistory: ...

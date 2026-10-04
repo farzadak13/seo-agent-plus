@@ -336,3 +336,42 @@ def test_with_google_too_a_site_holds_only_its_own_domains_property():
     )
     assert response.status_code == 422
     assert sites.get("s1").gsc is None
+
+
+def test_with_own_google_a_subdomain_site_may_use_its_domain_property():
+    from app.gsc.properties import GSCProperty
+    from app.models.sites import Site
+
+    client, sites, _ = api_client()
+    sites.create(Site(site_id="s2", principal_id="p1", name="Shop", base_url="https://shop.tennisino.com/"))
+    connect_google(client)
+    response = client.put(
+        "/v1/sites/s2/connections/gsc",
+        headers=AUTH,
+        json={"property_url": "sc-domain:tennisino.com", "use_google_account": True},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_with_the_shared_account_a_subdomain_site_may_not_use_its_domain_property():
+    from datetime import datetime, timezone
+
+    from app.models.sites import Site
+
+    client, sites, _ = api_client()
+    sites.create(
+        Site(
+            site_id="s2", principal_id="p1", name="Shop", base_url="https://shop.tennisino.com/",
+            ownership_method="meta_tag", ownership_verified_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        )
+    )
+    response = client.put(
+        "/v1/sites/s2/connections/gsc",
+        headers=AUTH,
+        json={
+            "property_url": "sc-domain:tennisino.com",
+            "credential_ref": "GSC_SERVICE_ACCOUNT_JSON",
+            "auth_mode": "service_account",
+        },
+    )
+    assert response.status_code == 422

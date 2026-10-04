@@ -3,7 +3,9 @@
 Search volume is monthly data and the provider allows a few dozen requests a
 day, so a keyword is asked about at most once a month and only in bulk:
 
-* every answer is stored, including "no data", for ``VOLUME_TTL``;
+* every answer is stored, including "no data", for ``VOLUME_TTL`` — or for
+  ``UNCONFIRMED_TTL`` when the provider found nothing for a whole request,
+  which is too unsure an answer to keep for a month;
 * only keywords without a fresh answer are sent, as few requests as the
   provider's bulk size allows;
 * each request is counted against a daily budget kept in the database, so
@@ -15,30 +17,18 @@ day, so a keyword is asked about at most once a month and only in bulk:
 Days are counted in Tehran time because that is when the provider's counter
 resets. Iran has not observed daylight saving since 2022, so a fixed offset is
 exact and needs no time-zone database on the server.
-
-Rank tracking has no daily cap, so it is only cached for a few hours to keep
-pages fast and the provider unbothered.
 """
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from datetime import datetime, timedelta, timezone
 
 from app.keyword_intel.contracts import (
     BudgetExhaustedError,
     ProviderQuotaError,
-    RankTrackerProvider,
     SearchVolumeProvider,
 )
-from app.models.keyword_intel import (
-    Device,
-    KeywordVolume,
-    RankHistory,
-    RankProject,
-    RankProjectSummary,
-    VolumeLookup,
-)
+from app.models.keyword_intel import KeywordVolume, VolumeLookup
 from app.models.persistence import PersistenceRecord
 from app.normalization.query import normalize_query
 from app.persistence.contracts import PersistenceConflictError, Repository
@@ -46,12 +36,9 @@ from app.persistence.contracts import PersistenceConflictError, Repository
 
 TEHRAN = timezone(timedelta(hours=3, minutes=30))
 VOLUME_TTL = timedelta(days=30)
-PROJECTS_TTL = timedelta(hours=1)
-PROJECT_TTL = timedelta(hours=24)
-HISTORY_TTL = timedelta(hours=6)
+UNCONFIRMED_TTL = timedelta(days=1)
 
 VOLUME_AGGREGATE = "keyword_volume"
-RANK_AGGREGATE = "rank_cache"
 BUDGET_AGGREGATE = "provider_budget"
 
 Clock = Callable[[], datetime]
@@ -174,12 +161,14 @@ class CachedSearchVolume:
         budget: RequestBudget | CombinedBudget,
         *,
         ttl: timedelta = VOLUME_TTL,
+        unconfirmed_ttl: timedelta = UNCONFIRMED_TTL,
         clock: Clock = _utcnow,
     ) -> None:
         self._provider = provider
         self._store = _Store(repository, VOLUME_AGGREGATE)
         self._budget = budget
         self._ttl = ttl
+        self._unconfirmed_ttl = unconfirmed_ttl
         self._clock = clock
 
     def _key(self, keyword: str) -> str:
@@ -200,7 +189,8 @@ class CachedSearchVolume:
             if cached is None:
                 continue
             volume = KeywordVolume.model_validate(cached[0])
-            if now - volume.fetched_at <= self._ttl:
+            ttl = self._ttl if volume.confirmed else self._unconfirmed_ttl
+            if now - volume.fetched_at <= ttl:
                 answers[keyword] = volume
             else:
                 stale[keyword] = volume
@@ -241,62 +231,3 @@ class CachedSearchVolume:
             pending=still_pending,
             requests_made=requests,
         )
-
-
-class CachedRankTracker:
-    """RankTrackerProvider with a short-lived cache in front."""
-
-    def __init__(
-        self, provider: RankTrackerProvider, repository: Repository, *, clock: Clock = _utcnow
-    ) -> None:
-        self._provider = provider
-        self._store = _Store(repository, RANK_AGGREGATE)
-        self._clock = clock
-
-    @property
-    def provider_id(self) -> str:
-        return self._provider.provider_id
-
-    def _cached(self, key: str, ttl: timedelta, fetch: Callable[[], Any]) -> Any:
-        full_key = f"{self._provider.provider_id}:{key}"
-        cached = self._store.read(full_key)
-        now = self._clock()
-        if cached is not None:
-            stored_at = datetime.fromisoformat(cached[0]["stored_at"])
-            if now - stored_at <= ttl:
-                return cached[0]["value"]
-        value = fetch()
-        self._store.upsert(full_key, {"stored_at": now.isoformat(), "value": value})
-        return value
-
-    def projects(self) -> list[RankProjectSummary]:
-        value = self._cached(
-            "projects", PROJECTS_TTL,
-            lambda: [p.model_dump(mode="json") for p in self._provider.projects()],
-        )
-        return [RankProjectSummary.model_validate(item) for item in value]
-
-    def project(self, project_id: str) -> RankProject:
-        value = self._cached(
-            f"project:{project_id}", PROJECT_TTL,
-            lambda: self._provider.project(project_id).model_dump(mode="json"),
-        )
-        return RankProject.model_validate(value)
-
-    def rank_history(
-        self,
-        *,
-        project_id: str,
-        device: Device,
-        start: date,
-        end: date,
-        domain: str | None = None,
-    ) -> RankHistory:
-        key = f"history:{project_id}:{device.value}:{domain or '-'}:{start.isoformat()}:{end.isoformat()}"
-        value = self._cached(
-            key, HISTORY_TTL,
-            lambda: self._provider.rank_history(
-                project_id=project_id, device=device, start=start, end=end, domain=domain
-            ).model_dump(mode="json"),
-        )
-        return RankHistory.model_validate(value)
