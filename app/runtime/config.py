@@ -30,6 +30,12 @@ class RuntimeConfig(BaseModel):
     # How far back the newest usable day is. See app.ingestion.calendar.
     gsc_data_lag_days: int = Field(default=GSC_DATA_LAG_DAYS, ge=0, le=10)
 
+    # Sign in with Google. All three, or none: a half-configured client sends
+    # customers to Google and fails on the way back.
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = Field(default=None, repr=False)
+    public_base_url: str | None = None
+
     # Stage 36 — title recommendation path.
     title_workflow_enabled: bool = False
     serp_mode: str = Field(default="none", pattern=r"^(none|static)$")
@@ -58,6 +64,23 @@ class RuntimeConfig(BaseModel):
                 "an unverified proxy can read and rewrite the token traffic."
             )
         return self
+
+    @model_validator(mode="after")
+    def google_sign_in_is_fully_configured(self):
+        values = (self.google_oauth_client_id, self.google_oauth_client_secret, self.public_base_url)
+        if any(values) and not all(values):
+            raise ValueError(
+                "Google sign-in needs SEO_AGENT_GOOGLE_OAUTH_CLIENT_ID, "
+                "SEO_AGENT_GOOGLE_OAUTH_CLIENT_SECRET and SEO_AGENT_PUBLIC_BASE_URL together."
+            )
+        if self.public_base_url and not self.public_base_url.startswith("https://"):
+            if self.environment.strip().lower() == "production":
+                raise ValueError("SEO_AGENT_PUBLIC_BASE_URL must be https in production.")
+        return self
+
+    @property
+    def google_sign_in_enabled(self) -> bool:
+        return bool(self.google_oauth_client_id)
 
     @model_validator(mode="after")
     def title_path_is_fully_configured(self):
@@ -134,6 +157,9 @@ class RuntimeConfig(BaseModel):
             arvan_endpoint=_env_optional("SEO_AGENT_ARVAN_ENDPOINT"),
             arvan_model=_env_optional("SEO_AGENT_ARVAN_MODEL"),
             arvan_api_key_ref=_env_optional("SEO_AGENT_ARVAN_API_KEY_REF"),
+            google_oauth_client_id=_env_optional("SEO_AGENT_GOOGLE_OAUTH_CLIENT_ID"),
+            google_oauth_client_secret=_env_optional("SEO_AGENT_GOOGLE_OAUTH_CLIENT_SECRET"),
+            public_base_url=_env_optional("SEO_AGENT_PUBLIC_BASE_URL"),
         )
 
 

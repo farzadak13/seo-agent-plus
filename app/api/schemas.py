@@ -64,7 +64,10 @@ class ConfigureGSCRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     property_url: str = Field(min_length=1, max_length=2000)
-    credential_ref: str = Field(min_length=1, max_length=200)
+    # Either the customer's own Google sign-in (POST /v1/google/connect) ...
+    use_google_account: bool = False
+    # ... or an operator credential named from the server environment.
+    credential_ref: str | None = Field(default=None, min_length=1, max_length=200)
     auth_mode: str = Field(default="access_token", min_length=1, max_length=50)
     row_limit: int = Field(default=25_000, ge=1, le=25_000)
 
@@ -158,7 +161,8 @@ class RunResponse(BaseModel):
 class AvailableGSCPropertiesRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    credential_ref: str = Field(min_length=1, max_length=200)
+    use_google_account: bool = False
+    credential_ref: str | None = Field(default=None, min_length=1, max_length=200)
     auth_mode: str = Field(default="service_account", min_length=1, max_length=50)
 
 

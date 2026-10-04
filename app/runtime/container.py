@@ -14,6 +14,7 @@ from app.api.auth import TenantAPIKeyAuthenticator
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.observability import InMemoryEventSink, InMemoryMetricsSink, ObservabilityContext
 from app.onboarding.secrets import EnvironmentSecretResolver
+from app.onboarding.google_oauth import GoogleOAuthConfig, GoogleOAuthService
 from app.onboarding.ownership import OwnershipVerifier
 from app.onboarding.vault import CompositeSecretResolver, Keyring, SecretVault
 from app.onboarding.site_store import SiteStore
@@ -50,6 +51,7 @@ class RuntimeContainer:
     adapters: SiteAdapterFactory
     action_store: ManagedActionStore
     vault: SecretVault | None = None
+    google_oauth: GoogleOAuthService | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
 
@@ -108,6 +110,23 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             config, secret_resolver=secret_resolver, transport=transport
         )
     adapters = SiteAdapterFactory(secret_resolver)
+
+    google_oauth = None
+    if config.google_sign_in_enabled:
+        if vault is None:
+            # The refresh tokens it receives must be stored encrypted.
+            raise RuntimeError(
+                "Google sign-in needs SEO_AGENT_SECRET_KEYS to store customers' tokens."
+            )
+        google_oauth = GoogleOAuthService(
+            config=GoogleOAuthConfig(
+                client_id=config.google_oauth_client_id,
+                client_secret=config.google_oauth_client_secret,
+                public_base_url=config.public_base_url,
+            ),
+            repository=repository,
+            vault=vault,
+        )
 
     # Stage 36: the title path is wired here or not at all. An enabled workflow
     # that cannot be built must fail startup rather than let runs report success
@@ -169,6 +188,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         adapters=adapters,
         action_store=action_store,
         vault=vault,
+        google_oauth=google_oauth,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
     )
@@ -208,6 +228,10 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             action_store=container.action_store,
             vault=container.vault,
             ownership_verifier=OwnershipVerifier(adapter_factory=container.adapters),
+            google_oauth=container.google_oauth,
+            tenant_name=lambda tenant_id: getattr(
+                container.tenant_store.find(tenant_id), "name", tenant_id
+            ),
         )
     )
     app.router.lifespan_context = lifespan

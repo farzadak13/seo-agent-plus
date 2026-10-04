@@ -1,5 +1,6 @@
 """Bound per-run gateways prevent credentials and baselines leaking between sites."""
 from datetime import date as Date, timedelta
+from functools import partial
 from hashlib import sha256
 import json
 
@@ -15,7 +16,9 @@ from app.normalization.observation import rows_to_observations
 from app.pipeline.decision import run_decision_pipeline
 from app.persistence.contracts import PersistenceConflictError
 from app.ingestion.calendar import latest_final_date
+from app.gsc.credentials import build_token_provider
 from app.runtime.gsc import LiveGSCGateway, build_google_transport
+from app.runtime.properties import google_client_options
 
 
 class PersistentSEORunService:
@@ -41,10 +44,19 @@ class PersistentSEORunService:
         # proxy configured in exactly one place.
         if self._transport is None:
             self._transport = build_google_transport(self.settings)
+        options = google_client_options(self.settings)
+        if not options:
+            return LiveGSCGateway(
+                site,
+                timeout=self.settings.gsc_timeout_seconds,
+                request_fn=self._transport,
+            )
+        # A customer's own Google sign-in refreshes with the app's client.
         return LiveGSCGateway(
             site,
             timeout=self.settings.gsc_timeout_seconds,
             request_fn=self._transport,
+            provider_factory=partial(build_token_provider, **options),
         )
 
     def _save_response(self, response):

@@ -7,9 +7,10 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 
+from app.api import oauth_pages
 from app.api.auth import APIKeyAuthenticator
 from app.action.approval import ApprovalError, approve, check_rollback, reject
 from app.action.executor import EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE
@@ -42,6 +43,8 @@ from app.models.sites import (
 )
 from app.onboarding.ownership import meta_tag as ownership_meta_tag
 from app.onboarding.ownership import new_token as new_ownership_token
+from app.onboarding.google_oauth import BEGIN_PATH, CALLBACK_PATH, OAuthError
+from app.onboarding.google_oauth import COOKIE_NAME as OAUTH_COOKIE
 from app.onboarding.ownership import credential_is_shared, property_matches_site
 from app.onboarding.site_store import SiteStore
 from app.persistence.contracts import (
@@ -54,6 +57,7 @@ from app.runs.store import RunStore
 
 
 SITE_SECRET_ENV_PREFIX = "SEO_AGENT_SITE_SECRET_"
+GOOGLE_ACCOUNT_AUTH_MODE = "oauth_refresh_token"
 
 RESERVED_JOB_TYPES = frozenset(
     {SEO_RUN_JOB_TYPE, EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE}
@@ -77,7 +81,15 @@ class APIDependencies:
         ownership_verifier=None,
         action_store: ManagedActionStore | None = None,
         vault=None,
+        google_oauth=None,
+        tenant_name=None,
     ) -> None:
+        # None: SEO_AGENT_GOOGLE_OAUTH_* not configured; only operator
+        # credentials can connect Search Console.
+        self.google_oauth = google_oauth
+        # tenant_id -> display name, for the page that confirms which account
+        # a Google sign-in is about to be connected to.
+        self.tenant_name = tenant_name or (lambda tenant_id: tenant_id)
         self.action_store = action_store
         # None: no SEO_AGENT_SECRET_KEYS, so credentials can only be referenced
         # from the environment, as before.
@@ -228,7 +240,10 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         """
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
-        shared = _require_ownership_for_shared_credential(site)
+        credential, auth_mode, lister_ref = _gsc_credential(
+            dependencies, request, authenticated_principal_id
+        )
+        shared = _require_ownership_for_shared_credential(site, credential)
         if dependencies.gsc_property_lister is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -236,7 +251,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             )
         try:
             properties = dependencies.gsc_property_lister(
-                auth_mode=request.auth_mode, credential_ref=request.credential_ref
+                auth_mode=auth_mode, credential_ref=lister_ref
             )
         except Exception as exc:
             raise HTTPException(
@@ -259,7 +274,10 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> SiteResponse:
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
-        shared = _require_ownership_for_shared_credential(site)
+        credential, auth_mode, lister_ref = _gsc_credential(
+            dependencies, request, authenticated_principal_id
+        )
+        shared = _require_ownership_for_shared_credential(site, credential)
         if shared:
             if not property_matches_site(request.property_url, str(site.base_url)):
                 raise HTTPException(
@@ -271,7 +289,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             # and failing on the first run with a 403 that names nothing.
             try:
                 properties = dependencies.gsc_property_lister(
-                    auth_mode=request.auth_mode, credential_ref=request.credential_ref
+                    auth_mode=auth_mode, credential_ref=lister_ref
                 )
             except Exception as exc:
                 raise HTTPException(
@@ -316,11 +334,8 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             update={
                 "gsc": GSCConnectionConfig(
                     property_url=request.property_url,
-                    credential_ref=SecretRef(
-                        provider=SecretProvider.ENVIRONMENT,
-                        key=request.credential_ref,
-                    ),
-                    auth_mode=request.auth_mode,
+                    credential_ref=credential,
+                    auth_mode=auth_mode,
                     row_limit=request.row_limit,
                 )
             }
@@ -528,6 +543,59 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             )
         return {**_ownership_response(site), "reasons": reasons}
 
+    # Sign in with Google: the customer grants read-only Search Console
+    # access on Google's own screen. See app.onboarding.google_oauth.
+
+    @app.post("/v1/google/connect")
+    def google_connect(authenticated_principal_id: str = Depends(principal_id)):
+        oauth = _require_google_oauth(dependencies)
+        return {"connect_url": oauth.start(authenticated_principal_id)}
+
+    @app.get("/v1/google/connection")
+    def google_connection(authenticated_principal_id: str = Depends(principal_id)):
+        oauth = _require_google_oauth(dependencies)
+        connection = oauth.connection(authenticated_principal_id)
+        if connection is None:
+            return {"connected": False}
+        return {
+            "connected": True,
+            "email": connection.email,
+            "connected_at": connection.connected_at,
+        }
+
+    @app.get(BEGIN_PATH, include_in_schema=False)
+    def google_begin(state: str = ""):
+        oauth = _require_google_oauth(dependencies)
+        try:
+            tenant_id, google_url, nonce = oauth.begin(state)
+        except OAuthError as exc:
+            return oauth_pages.error_page(str(exc))
+        page = oauth_pages.confirm_page(dependencies.tenant_name(tenant_id), google_url)
+        page.set_cookie(
+            OAUTH_COOKIE, nonce, max_age=600, path="/v1/oauth/google",
+            secure=True, httponly=True, samesite="lax",
+        )
+        return page
+
+    @app.get(CALLBACK_PATH, include_in_schema=False)
+    def google_callback(
+        http_request: Request, state: str = "", code: str | None = None, error: str | None = None
+    ):
+        oauth = _require_google_oauth(dependencies)
+        try:
+            connection = oauth.complete(
+                state_id=state,
+                code=code,
+                error=error,
+                browser_nonce=http_request.cookies.get(OAUTH_COOKIE),
+            )
+        except OAuthError as exc:
+            page = oauth_pages.error_page(str(exc))
+        else:
+            page = oauth_pages.done_page(connection.email)
+        page.delete_cookie(OAUTH_COOKIE, path="/v1/oauth/google")
+        return page
+
     # Stage 37 — nothing reaches a customer's site without a person saying yes.
 
     @app.get("/v1/sites/{site_id}/actions", response_model=ActionListResponse)
@@ -642,6 +710,40 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         return ActionResponse.from_managed(requested, job_id=job.job_id)
 
     return app
+
+
+def _require_google_oauth(dependencies: APIDependencies):
+    if dependencies.google_oauth is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google sign-in is not configured on this server.",
+        )
+    return dependencies.google_oauth
+
+
+def _gsc_credential(dependencies, request, tenant_id: str):
+    """(credential, auth_mode, what to hand the property lister) for a request."""
+    if request.use_google_account:
+        oauth = dependencies.google_oauth
+        if oauth is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Google sign-in is not configured on this server.",
+            )
+        connection = oauth.connection(tenant_id)
+        if connection is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Connect your Google account first (POST /v1/google/connect).",
+            )
+        return connection.credential_ref, GOOGLE_ACCOUNT_AUTH_MODE, connection.credential_ref
+    if not request.credential_ref:
+        raise HTTPException(
+            status_code=422,
+            detail="Give credential_ref, or set use_google_account after connecting Google.",
+        )
+    reference = SecretRef(provider=SecretProvider.ENVIRONMENT, key=request.credential_ref)
+    return reference, request.auth_mode, request.credential_ref
 
 
 def _ownership_response(site: Site) -> dict:

@@ -11,6 +11,16 @@ from app.gsc.properties import list_properties
 from app.models.sites import SecretProvider, SecretRef
 
 
+def google_client_options(settings) -> dict:
+    """client_id/secret for refreshing customers' Google sign-ins, when configured."""
+    if not getattr(settings, "google_oauth_client_id", None):
+        return {}
+    return {
+        "client_id": settings.google_oauth_client_id,
+        "client_secret": settings.google_oauth_client_secret,
+    }
+
+
 def build_property_lister(settings, *, secret_resolver, transport):
     """Return ``(auth_mode, credential_ref) -> [GSCProperty]``.
 
@@ -18,14 +28,20 @@ def build_property_lister(settings, *, secret_resolver, transport):
     takes effect without a restart.
     """
 
-    def lister(*, auth_mode: str, credential_ref: str):
-        secret = secret_resolver.resolve(
-            SecretRef(provider=SecretProvider.ENVIRONMENT, key=credential_ref)
+    def lister(*, auth_mode: str, credential_ref):
+        # A string names an operator credential in the environment; a
+        # SecretRef is a customer's own Google sign-in, held in the vault.
+        reference = (
+            credential_ref
+            if isinstance(credential_ref, SecretRef)
+            else SecretRef(provider=SecretProvider.ENVIRONMENT, key=credential_ref)
         )
+        secret = secret_resolver.resolve(reference)
         provider = build_token_provider(
             kind=auth_mode,
             secret=secret,
             session=getattr(transport, "session", None),
+            **google_client_options(settings),
         )
         return list_properties(
             request_fn=transport,
