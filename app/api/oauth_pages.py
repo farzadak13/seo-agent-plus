@@ -11,7 +11,10 @@ from fastapi.responses import HTMLResponse
 
 
 SECURITY_HEADERS = {
-    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; "
+        "form-action 'self' https://accounts.google.com"
+    ),
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store",
@@ -23,7 +26,7 @@ main{max-width:520px;margin:12vh auto;padding:32px;background:#fff;border-radius
 box-shadow:0 2px 12px rgba(0,0,0,.06);line-height:1.9}
 h1{font-size:1.3rem;margin-top:0}
 .account{background:#eef3ff;border-radius:8px;padding:10px 14px;font-weight:bold}
-a.button{display:inline-block;margin-top:18px;background:#1a73e8;color:#fff;text-decoration:none;
+button{margin-top:18px;background:#1a73e8;color:#fff;border:0;font:inherit;cursor:pointer;
 padding:10px 22px;border-radius:8px}
 .muted{color:#5f6b7a;font-size:.9rem}
 .error{color:#b3261e}
@@ -42,7 +45,7 @@ def _page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
     return HTMLResponse(html, status_code=status_code, headers=SECURITY_HEADERS)
 
 
-def confirm_page(account_name: str, google_url: str) -> HTMLResponse:
+def confirm_page(account_name: str, action: str, state: str) -> HTMLResponse:
     return _page(
         "اتصال Search Console",
         "<h1>اتصال Search Console به هوشیار سئو</h1>"
@@ -51,7 +54,11 @@ def confirm_page(account_name: str, google_url: str) -> HTMLResponse:
         "<p>اگر این حساب شما نیست، این صفحه را ببندید.</p>"
         "<p class=\"muted\">دسترسی فقط‌خواندنی است: هوشیار سئو آمار جستجو را می‌خواند و "
         "هیچ تغییری در Search Console نمی‌دهد. هر وقت بخواهید از حساب گوگل خود قطعش کنید.</p>"
-        f'<a class="button" href="{escape(google_url, quote=True)}">ادامه با گوگل</a>',
+        # A form, not a link: only a person pressing it spends the one-time
+        # state, never a messenger building a preview of the page.
+        f'<form method="post" action="{escape(action, quote=True)}">'
+        f'<input type="hidden" name="state" value="{escape(state, quote=True)}">'
+        "<button type=\"submit\">ادامه با گوگل</button></form>",
     )
 
 

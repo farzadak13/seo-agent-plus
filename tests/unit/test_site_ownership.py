@@ -372,3 +372,40 @@ def test_a_site_written_from_a_stale_copy_is_refused():
     with pytest.raises(SiteChangedError):
         sites.update(original.model_copy(update={"ownership_method": "meta_tag"}))
     assert sites.get("s1").name == "renamed by someone else"
+
+
+def test_an_unreachable_ipv6_address_falls_back_to_ipv4(monkeypatch):
+    from app.net.guard import _PinnedHTTPConnection
+
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda *a, **k: [
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700::1", 80, 0, 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80)),
+        ],
+    )
+    tried = []
+
+    def create_connection(address, *args):
+        tried.append(address[0])
+        if ":" in address[0]:
+            raise OSError("Network is unreachable")
+        return "socket"
+
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    connection = _PinnedHTTPConnection("dual.example", 80)
+    connection.connect()
+    assert tried == ["2606:4700::1", "93.184.216.34"]
+    assert connection.sock == "socket"
+
+
+def test_one_private_address_among_public_ones_refuses_them_all(monkeypatch):
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda *a, **k: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 80)),
+        ],
+    )
+    with pytest.raises(UnsafeAddressError):
+        ensure_public_url("http://mixed.example/")

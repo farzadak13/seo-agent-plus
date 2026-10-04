@@ -14,9 +14,11 @@ The flow, and what each step defends against:
 1. ``start`` (authenticated API call) records a single-use state with a PKCE
    verifier and a browser nonce, and returns a link to our own ``begin``
    page — not to Google.
-2. ``begin`` (the customer's browser) can be opened once. It sets the nonce
-   as an HttpOnly cookie and shows which HoshyarSEO account is about to be
-   connected, then sends the browser to Google. Without this, anyone could
+2. ``begin``: opening the link (GET) only shows which HoshyarSEO account is
+   about to be connected; messengers and mail scanners open links to build
+   previews, and a link spent by a preview would greet the customer with
+   "already used". The "continue" button (POST) spends it once, sets the
+   nonce as an HttpOnly cookie and sends the browser to Google. Without this, anyone could
    send a victim their own Google link and receive the victim's Search
    Console in their own account; the cookie ties the callback to the browser
    that began, and the page names the account so a lure is visible.
@@ -45,6 +47,7 @@ from app.persistence.contracts import Repository
 
 AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
 SCOPES = ("openid", "https://www.googleapis.com/auth/userinfo.email", SEARCH_CONSOLE_READONLY)
 STATE_TTL = timedelta(minutes=10)
 CALLBACK_PATH = "/v1/oauth/google/callback"
@@ -92,6 +95,7 @@ class GoogleConnection(BaseModel):
     scopes: list[str]
     credential_ref: SecretRef
     connected_at: datetime
+    disconnected_at: datetime | None = None
 
 
 def tenant_credential_ref(tenant_id: str) -> SecretRef:
@@ -114,6 +118,12 @@ def default_token_exchange(form: dict) -> tuple[int, dict]:
     return response.status_code, body
 
 
+def default_revoke(token: str) -> int:
+    import requests
+
+    return requests.post(REVOKE_ENDPOINT, data={"token": token}, timeout=30).status_code
+
+
 class GoogleOAuthService:
     def __init__(
         self,
@@ -122,12 +132,14 @@ class GoogleOAuthService:
         repository: Repository,
         vault,
         exchange: Callable[[dict], tuple[int, dict]] = default_token_exchange,
+        revoke: Callable[[str], int] | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._config = config
         self._repository = repository
         self._vault = vault
         self._exchange = exchange
+        self._revoke = revoke or default_revoke
         self._clock = clock
 
     @property
@@ -155,11 +167,18 @@ class GoogleOAuthService:
 
     # --- 2. begin -----------------------------------------------------------
 
+    def preview(self, state_id: str) -> str:
+        """The tenant a link would connect to, without spending it."""
+        state, _ = self._live_state(state_id)
+        if state.begun:
+            raise OAuthError("This link has already been used. Start the connection again.")
+        return state.tenant_id
+
     def begin(self, state_id: str) -> tuple[str, str, str]:
         """Return (tenant_id, google_url, browser_nonce). Usable once."""
         state, version = self._live_state(state_id)
         if state.begun:
-            raise OAuthError("This link has already been opened. Start the connection again.")
+            raise OAuthError("This link has already been used. Start the connection again.")
         self._replace_state(state.model_copy(update={"begun": True}), version)
         query = {
             "client_id": self._config.client_id,
@@ -236,7 +255,42 @@ class GoogleOAuthService:
 
     def connection(self, tenant_id: str) -> GoogleConnection | None:
         record = self._repository.get(aggregate_type=CONNECTION_AGGREGATE, aggregate_id=tenant_id)
-        return None if record is None else GoogleConnection.model_validate(record.payload)
+        if record is None:
+            return None
+        connection = GoogleConnection.model_validate(record.payload)
+        return None if connection.disconnected_at is not None else connection
+
+    def disconnect(self, tenant_id: str) -> GoogleConnection | None:
+        """Revoke at Google, then forget. Returns the connection that was removed.
+
+        Revocation comes first and must succeed: only Google can make the
+        token stop working everywhere, including any copy in an old record
+        version or a backup. If Google cannot be reached, nothing is changed
+        and the customer is told, rather than shown a disconnection that
+        has not happened.
+        """
+        connection = self.connection(tenant_id)
+        if connection is None:
+            return None
+        try:
+            token = self._vault.get(connection.credential_ref.key)
+        except Exception:
+            token = None  # already unreadable: nothing left to revoke
+        if token is not None:
+            try:
+                status = self._revoke(token)
+            except Exception as exc:
+                raise OAuthError(
+                    "Google could not be reached to revoke access; nothing was changed. Try again."
+                ) from exc
+            # 400 invalid_token: already revoked from the customer's side.
+            if status not in {200, 400}:
+                raise OAuthError(
+                    f"Google did not confirm the revocation ({status}); nothing was changed. Try again."
+                )
+        self._vault.erase(connection.credential_ref.key)
+        self._save_connection(connection.model_copy(update={"disconnected_at": self._clock()}))
+        return connection
 
     # --- persistence --------------------------------------------------------
 

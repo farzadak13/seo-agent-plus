@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from contextlib import nullcontext
+from urllib.parse import parse_qs
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api import oauth_pages
@@ -563,19 +565,53 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             "connected_at": connection.connected_at,
         }
 
-    @app.get(BEGIN_PATH, include_in_schema=False)
-    def google_begin(state: str = ""):
+    @app.delete("/v1/google/connection")
+    def google_disconnect(authenticated_principal_id: str = Depends(principal_id)):
         oauth = _require_google_oauth(dependencies)
         try:
-            tenant_id, google_url, nonce = oauth.begin(state)
+            removed = oauth.disconnect(authenticated_principal_id)
+        except OAuthError as exc:
+            raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+        detached = []
+        if removed is not None and dependencies.site_store is not None:
+            # Sites reading through the revoked grant would fail on every run
+            # with an error that names nothing; detach them so the dashboard
+            # says plainly that Search Console needs connecting again.
+            for site in dependencies.site_store.list_for_tenant(authenticated_principal_id):
+                if site.gsc is not None and site.gsc.credential_ref == removed.credential_ref:
+                    dependencies.site_store.update(site.model_copy(update={"gsc": None}))
+                    detached.append(site.site_id)
+        return {"connected": False, "revoked": removed is not None, "sites_detached": detached}
+
+    @app.get(BEGIN_PATH, include_in_schema=False)
+    def google_begin_page(state: str = ""):
+        oauth = _require_google_oauth(dependencies)
+        try:
+            tenant_id = oauth.preview(state)
         except OAuthError as exc:
             return oauth_pages.error_page(str(exc))
-        page = oauth_pages.confirm_page(dependencies.tenant_name(tenant_id), google_url)
-        page.set_cookie(
+        return oauth_pages.confirm_page(dependencies.tenant_name(tenant_id), BEGIN_PATH, state)
+
+    @app.post(BEGIN_PATH, include_in_schema=False)
+    async def google_begin(http_request: Request):
+        oauth = _require_google_oauth(dependencies)
+        if http_request.headers.get("sec-fetch-site") in {"cross-site", "same-site"}:
+            # Only our own confirmation page may press "continue". A page
+            # elsewhere auto-submitting this form would skip the screen that
+            # names the account being connected.
+            return oauth_pages.error_page("This page can only be continued from HoshyarSEO itself.")
+        form = parse_qs((await http_request.body()).decode("utf-8", errors="replace"))
+        try:
+            _, google_url, nonce = oauth.begin((form.get("state") or [""])[0])
+        except OAuthError as exc:
+            return oauth_pages.error_page(str(exc))
+        response = RedirectResponse(google_url, status_code=status.HTTP_303_SEE_OTHER)
+        response.set_cookie(
             OAUTH_COOKIE, nonce, max_age=600, path="/v1/oauth/google",
             secure=True, httponly=True, samesite="lax",
         )
-        return page
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
 
     @app.get(CALLBACK_PATH, include_in_schema=False)
     def google_callback(

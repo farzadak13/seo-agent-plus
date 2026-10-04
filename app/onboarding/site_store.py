@@ -62,6 +62,18 @@ class SiteStore:
         )
         return updated
 
+    def list_for_tenant(self, tenant_id: str) -> list[Site]:
+        sites: list[Site] = []
+        cursor = None
+        while True:
+            page = self._repository.query(
+                tenant_id=tenant_id, aggregate_type=SITE_AGGREGATE_TYPE, limit=200, cursor=cursor
+            )
+            sites.extend(Site.model_validate(record.payload) for record in page.records)
+            if page.next_cursor is None:
+                return sites
+            cursor = page.next_cursor
+
     @staticmethod
     def _to_record(site: Site, *, version: int) -> PersistenceRecord:
         return PersistenceRecord(

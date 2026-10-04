@@ -33,8 +33,8 @@ class UnsafeAddressError(ValueError):
     """The URL points somewhere this server must not be made to request."""
 
 
-def resolve_public(host: str, port: int) -> str:
-    """The first address of ``host``, provided every address it has is public."""
+def resolve_public(host: str, port: int) -> list[str]:
+    """Every address of ``host``, provided every one of them is public."""
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
@@ -47,7 +47,27 @@ def resolve_public(host: str, port: int) -> str:
             raise UnsafeAddressError(
                 f"The host {host} resolves to a non-public address and will not be fetched."
             )
-    return infos[0][4][0]
+    addresses: list[str] = []
+    for info in infos:
+        if info[4][0] not in addresses:
+            addresses.append(info[4][0])
+    return addresses
+
+
+def _connect_checked(host: str, port: int, timeout, source_address) -> socket.socket:
+    """Try each checked address in turn, as create_connection would.
+
+    Only the first address used to be tried. A site with an IPv6 record
+    listed first was then unreachable from a server without an IPv6 route,
+    though its IPv4 address would have answered.
+    """
+    last_error: OSError | None = None
+    for address in resolve_public(host, port):
+        try:
+            return socket.create_connection((address, port), timeout, source_address)
+        except OSError as exc:
+            last_error = exc
+    raise last_error or OSError(f"Could not connect to {host}.")
 
 
 def ensure_public_url(url: str) -> None:
@@ -69,14 +89,12 @@ def same_site(first: str, second: str) -> bool:
 
 class _PinnedHTTPConnection(http.client.HTTPConnection):
     def connect(self):
-        address = resolve_public(self.host, self.port)
-        self.sock = socket.create_connection((address, self.port), self.timeout, self.source_address)
+        self.sock = _connect_checked(self.host, self.port, self.timeout, self.source_address)
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):
     def connect(self):
-        address = resolve_public(self.host, self.port)
-        raw = socket.create_connection((address, self.port), self.timeout, self.source_address)
+        raw = _connect_checked(self.host, self.port, self.timeout, self.source_address)
         # Certificate checked against the name, connection made to the address.
         self.sock = self._context.wrap_socket(raw, server_hostname=self.host)
 

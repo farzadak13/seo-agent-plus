@@ -91,12 +91,20 @@ def test_a_link_sent_to_someone_else_does_not_complete_in_their_browser():
     assert service.connection("attacker") is None
 
 
-def test_the_begin_link_opens_once():
+def test_the_begin_link_continues_once():
     service, _, _ = make()
     state = state_of(service.start("tenant-1"))
     service.begin(state)
-    with pytest.raises(OAuthError, match="already been opened"):
+    with pytest.raises(OAuthError, match="already been used"):
         service.begin(state)
+
+
+def test_a_messenger_preview_does_not_spend_the_link():
+    service, _, _ = make()
+    state = state_of(service.start("tenant-1"))
+    assert service.preview(state) == "tenant-1"
+    assert service.preview(state) == "tenant-1"
+    service.begin(state)  # the person pressing continue still can
 
 
 def test_a_callback_cannot_be_replayed():
@@ -190,23 +198,35 @@ def api_client(google=None):
 AUTH = {"Authorization": "Bearer k"}
 
 
+def press_continue(client, state, **headers):
+    return client.post(
+        "/v1/oauth/google/begin", data={"state": state}, headers=headers, follow_redirects=False
+    )
+
+
 def connect_google(client):
     link = client.post("/v1/google/connect", headers=AUTH).json()["connect_url"]
     begin = client.get(link.removeprefix("https://hoshyarseo.ir"))
     assert begin.status_code == 200
     state = state_of(link)
-    return client.get(f"/v1/oauth/google/callback?state={state}&code=code-1"), begin
+    pressed = press_continue(client, state, **{"sec-fetch-site": "same-origin"})
+    assert pressed.status_code == 303
+    assert pressed.headers["location"].startswith("https://accounts.google.com/")
+    return client.get(f"/v1/oauth/google/callback?state={state}&code=code-1"), pressed
 
 
 def test_the_customer_signs_in_and_sees_which_account_is_being_connected():
     client, _, _ = api_client()
-    done, begin = connect_google(client)
+    link = client.post("/v1/google/connect", headers=AUTH).json()["connect_url"]
+    page = client.get(link.removeprefix("https://hoshyarseo.ir"))
+    assert "Tennisino Shop" in page.text, "the account is named before going to Google"
+    assert page.headers["x-frame-options"] == "DENY"
+    assert "set-cookie" not in page.headers, "opening the page spends nothing"
 
-    assert "Tennisino Shop" in begin.text, "the account is named before going to Google"
-    assert "accounts.google.com" in begin.text
-    assert begin.headers["x-frame-options"] == "DENY"
-    assert "hoshyarseo_oauth" in begin.headers["set-cookie"]
-    assert "HttpOnly" in begin.headers["set-cookie"] and "Secure" in begin.headers["set-cookie"]
+    pressed = press_continue(client, state_of(link))
+    assert "hoshyarseo_oauth" in pressed.headers["set-cookie"]
+    assert "HttpOnly" in pressed.headers["set-cookie"] and "Secure" in pressed.headers["set-cookie"]
+    done = client.get(f"/v1/oauth/google/callback?state={state_of(link)}&code=code-1")
 
     assert done.status_code == 200, done.text
     assert "owner@tennisino.com" in done.text
@@ -258,7 +278,7 @@ def test_using_google_before_connecting_it_says_so():
 def test_a_callback_without_the_browser_cookie_shows_an_error_page():
     client, _, _ = api_client()
     link = client.post("/v1/google/connect", headers=AUTH).json()["connect_url"]
-    client.get(link.removeprefix("https://hoshyarseo.ir"))
+    press_continue(client, state_of(link))
     client.cookies.clear()
 
     page = client.get(f"/v1/oauth/google/callback?state={state_of(link)}&code=c")
@@ -290,3 +310,11 @@ def test_half_a_configuration_is_refused_at_startup():
 
     with pytest.raises(ValueError, match="together"):
         RuntimeConfig(api_key="k", database_dsn="d", google_oauth_client_id="id")
+
+
+def test_another_site_cannot_press_continue_for_the_customer():
+    client, _, _ = api_client()
+    link = client.post("/v1/google/connect", headers=AUTH).json()["connect_url"]
+    pressed = press_continue(client, state_of(link), **{"sec-fetch-site": "cross-site"})
+    assert pressed.status_code == 400
+    assert "set-cookie" not in pressed.headers

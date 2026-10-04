@@ -47,7 +47,11 @@ class StoredSecret(BaseModel):
     tenant_id: str = Field(min_length=1)
     site_id: str = Field(min_length=1)
     name: str = Field(min_length=1, max_length=100)
-    ciphertext: str = Field(min_length=1, repr=False)
+    # Empty once erased. Earlier versions stay in the append-only store, so
+    # erasing is not deletion: a credential that must stop working is revoked
+    # where it was issued (see GoogleOAuthService.disconnect).
+    ciphertext: str = Field(default="", repr=False)
+    erased: bool = False
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -155,6 +159,29 @@ class SecretVault:
             self._repository.replace(record, expected_version=current.version)
         return reference_for(site_id, name)
 
+    def erase(self, aggregate_id: str) -> None:
+        """Make the current value unreadable through the vault from now on."""
+        current = self._repository.get(
+            aggregate_type=SECRET_AGGREGATE_TYPE, aggregate_id=aggregate_id
+        )
+        if current is None:
+            return
+        stored = StoredSecret.model_validate(current.payload)
+        tombstone = stored.model_copy(
+            update={"ciphertext": "", "erased": True, "updated_at": datetime.now(timezone.utc)}
+        )
+        version = current.version + 1
+        self._repository.replace(
+            current.model_copy(
+                update={
+                    "record_id": f"secret:{aggregate_id}:v{version}",
+                    "version": version,
+                    "payload": tombstone.model_dump(mode="json"),
+                }
+            ),
+            expected_version=current.version,
+        )
+
     def get(self, aggregate_id: str) -> str:
         record = self._repository.get(
             aggregate_type=SECRET_AGGREGATE_TYPE, aggregate_id=aggregate_id
@@ -162,6 +189,8 @@ class SecretVault:
         if record is None:
             raise SecretResolutionError(f"Secret is not configured: {aggregate_id}")
         stored = StoredSecret.model_validate(record.payload)
+        if stored.erased:
+            raise SecretResolutionError(f"This credential was disconnected: {aggregate_id}")
         # The context comes from where the value was looked up, not from the
         # payload beside it: a payload copied wholesale into another site's
         # slot would otherwise carry its own matching context along.
