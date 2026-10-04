@@ -40,7 +40,7 @@ def connected_service(revoke_status=200, revoke_error=None):
 def test_disconnecting_revokes_at_google_then_forgets():
     service, vault, connection, revoked = connected_service()
 
-    assert service.disconnect("tenant-1") is not None
+    assert service.disconnect("tenant-1") is True
 
     assert revoked == ["refresh-1"]
     assert service.connection("tenant-1") is None
@@ -74,7 +74,7 @@ def test_a_token_already_revoked_by_the_customer_still_disconnects():
 def test_disconnecting_twice_is_harmless():
     service, _, _, revoked = connected_service()
     service.disconnect("tenant-1")
-    assert service.disconnect("tenant-1") is None
+    assert service.disconnect("tenant-1") is False
     assert revoked == ["refresh-1"]
 
 
@@ -108,3 +108,51 @@ def test_the_api_reports_a_failed_revocation():
 
     assert response.status_code == 502
     assert client.get("/v1/google/connection", headers=AUTH).json()["connected"] is True
+
+
+def test_a_token_that_cannot_be_read_right_now_is_not_erased_unrevoked():
+    service, vault, connection, revoked = connected_service()
+
+    def unreadable(key):
+        raise RuntimeError("database briefly unreachable")
+
+    vault.get = unreadable
+    with pytest.raises(OAuthError, match="could not be read"):
+        service.disconnect("tenant-1")
+
+    assert revoked == []
+    assert service.connection("tenant-1") is not None
+    assert vault.holds(connection.credential_ref.key)
+
+
+def test_a_retry_finishes_detaching_sites_after_a_failure_part_way():
+    from app.onboarding.site_store import SiteChangedError
+
+    client, sites, _ = api_client()
+    connect_google(client)
+    client.put(
+        "/v1/sites/s1/connections/gsc",
+        headers=AUTH,
+        json={"property_url": "sc-domain:tennisino.com", "use_google_account": True},
+    )
+    dependencies = client.app.state.dependencies
+    dependencies.google_oauth._revoke = lambda token: 200
+    real_update = dependencies.site_store.update
+    calls = {"n": 0}
+
+    def flaky_update(site):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise SiteChangedError("raced")
+        return real_update(site)
+
+    dependencies.site_store.update = flaky_update
+    first = client.delete("/v1/google/connection", headers=AUTH)
+    assert first.status_code == 409
+    assert sites.get("s1").gsc is not None, "the first attempt was interrupted"
+
+    second = client.delete("/v1/google/connection", headers=AUTH)
+
+    assert second.status_code == 200, second.text
+    assert second.json() == {"connected": False, "revoked": False, "sites_detached": ["s1"]}
+    assert sites.get("s1").gsc is None

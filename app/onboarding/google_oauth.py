@@ -260,8 +260,8 @@ class GoogleOAuthService:
         connection = GoogleConnection.model_validate(record.payload)
         return None if connection.disconnected_at is not None else connection
 
-    def disconnect(self, tenant_id: str) -> GoogleConnection | None:
-        """Revoke at Google, then forget. Returns the connection that was removed.
+    def disconnect(self, tenant_id: str) -> bool:
+        """Revoke at Google, then forget. True when a live grant was revoked.
 
         Revocation comes first and must succeed: only Google can make the
         token stop working everywhere, including any copy in an old record
@@ -271,12 +271,21 @@ class GoogleOAuthService:
         """
         connection = self.connection(tenant_id)
         if connection is None:
-            return None
-        try:
-            token = self._vault.get(connection.credential_ref.key)
-        except Exception:
-            token = None  # already unreadable: nothing left to revoke
-        if token is not None:
+            return False
+        key = connection.credential_ref.key
+        # Only a value that is truly gone means "nothing to revoke". A value
+        # that is there but cannot be read right now (database hiccup, a key
+        # dropped in rotation) must stop the disconnection: erasing it would
+        # leave a grant Google still honours and that nobody can revoke.
+        revoked = False
+        if self._vault.holds(key):
+            try:
+                token = self._vault.get(key)
+            except Exception as exc:
+                raise OAuthError(
+                    "The stored Google token could not be read, so it could not be revoked; "
+                    "nothing was changed. Try again."
+                ) from exc
             try:
                 status = self._revoke(token)
             except Exception as exc:
@@ -288,9 +297,10 @@ class GoogleOAuthService:
                 raise OAuthError(
                     f"Google did not confirm the revocation ({status}); nothing was changed. Try again."
                 )
-        self._vault.erase(connection.credential_ref.key)
+            revoked = True
+        self._vault.erase(key)
         self._save_connection(connection.model_copy(update={"disconnected_at": self._clock()}))
-        return connection
+        return revoked
 
     # --- persistence --------------------------------------------------------
 

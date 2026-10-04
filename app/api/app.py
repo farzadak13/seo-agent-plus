@@ -45,7 +45,7 @@ from app.models.sites import (
 )
 from app.onboarding.ownership import meta_tag as ownership_meta_tag
 from app.onboarding.ownership import new_token as new_ownership_token
-from app.onboarding.google_oauth import BEGIN_PATH, CALLBACK_PATH, OAuthError
+from app.onboarding.google_oauth import BEGIN_PATH, CALLBACK_PATH, OAuthError, tenant_credential_ref
 from app.onboarding.google_oauth import COOKIE_NAME as OAUTH_COOKIE
 from app.onboarding.ownership import credential_is_shared, property_matches_site
 from app.onboarding.site_store import SiteStore
@@ -569,19 +569,22 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     def google_disconnect(authenticated_principal_id: str = Depends(principal_id)):
         oauth = _require_google_oauth(dependencies)
         try:
-            removed = oauth.disconnect(authenticated_principal_id)
+            revoked = oauth.disconnect(authenticated_principal_id)
         except OAuthError as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
         detached = []
-        if removed is not None and dependencies.site_store is not None:
+        if dependencies.site_store is not None:
             # Sites reading through the revoked grant would fail on every run
             # with an error that names nothing; detach them so the dashboard
-            # says plainly that Search Console needs connecting again.
+            # says plainly that Search Console needs connecting again. This
+            # runs on every call, not only when a grant was just removed, so
+            # a retry after a failure part-way through finishes the job.
+            grant = tenant_credential_ref(authenticated_principal_id)
             for site in dependencies.site_store.list_for_tenant(authenticated_principal_id):
-                if site.gsc is not None and site.gsc.credential_ref == removed.credential_ref:
+                if site.gsc is not None and site.gsc.credential_ref == grant:
                     dependencies.site_store.update(site.model_copy(update={"gsc": None}))
                     detached.append(site.site_id)
-        return {"connected": False, "revoked": removed is not None, "sites_detached": detached}
+        return {"connected": False, "revoked": revoked, "sites_detached": detached}
 
     @app.get(BEGIN_PATH, include_in_schema=False)
     def google_begin_page(state: str = ""):

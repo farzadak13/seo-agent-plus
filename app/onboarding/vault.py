@@ -159,6 +159,17 @@ class SecretVault:
             self._repository.replace(record, expected_version=current.version)
         return reference_for(site_id, name)
 
+    def holds(self, aggregate_id: str) -> bool:
+        """True while a live (not erased) value is stored under this id.
+
+        Answers from the record alone, without decrypting, so a caller can
+        tell "nothing to read" apart from "failed to read".
+        """
+        record = self._repository.get(
+            aggregate_type=SECRET_AGGREGATE_TYPE, aggregate_id=aggregate_id
+        )
+        return record is not None and not StoredSecret.model_validate(record.payload).erased
+
     def erase(self, aggregate_id: str) -> None:
         """Make the current value unreadable through the vault from now on."""
         current = self._repository.get(
