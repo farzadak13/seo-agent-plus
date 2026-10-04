@@ -97,3 +97,23 @@ def test_the_provider_is_configuration_not_code():
         RuntimeConfig(api_key="k", database_dsn="d", keyword_provider="seosignal")
     with pytest.raises(ValueError):
         RuntimeConfig(api_key="k", database_dsn="d", keyword_provider="somethingelse")
+
+
+def test_the_providers_own_words_do_not_reach_the_customer():
+    from app.keyword_intel.seosignal import RawResponse
+
+    client, fake = make()
+    fake.fail_with = RawResponse(503, "<html>upstream nginx internal-host-7</html>")
+    response = client.post("/v1/keywords/volume", headers=AUTH, json={"keywords": ["کفش مردانه"]})
+    assert response.status_code == 502
+    assert "internal-host-7" not in response.text
+
+
+def test_a_coded_provider_error_is_generic_for_the_customer():
+    from tests.unit.test_keyword_intel import answer
+
+    client, fake = make()
+    fake.fail_with = answer(403, {"error": {"code": "PLAN_NOT_ALLOWED"}})
+    response = client.post("/v1/keywords/volume", headers=AUTH, json={"keywords": ["کفش مردانه"]})
+    assert response.status_code == 502
+    assert "SEO Signal" not in response.text and "PLAN_NOT_ALLOWED" not in response.text

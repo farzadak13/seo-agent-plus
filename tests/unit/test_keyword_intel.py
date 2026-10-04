@@ -108,11 +108,32 @@ def test_provider_errors_become_ours(response, error):
         SeoSignalSearchVolume(client(fake)).search_volumes(["x"])
 
 
-def test_an_answer_of_unexpected_shape_says_what_came_back():
+def test_an_answer_of_unexpected_shape_is_described_to_the_operator_only():
     fake = FakeSeoSignal()
     fake.fail_with = RawResponse(200, "<html>maintenance</html>")
-    with pytest.raises(KeywordProviderError, match="maintenance"):
+    with pytest.raises(KeywordProviderError) as raised:
         SeoSignalSearchVolume(client(fake)).search_volumes(["x"])
+    assert "maintenance" not in str(raised.value), "not in what a customer sees"
+    assert "maintenance" in raised.value.detail, "but kept for the operator"
+
+
+@pytest.mark.parametrize(
+    "status, error",
+    [(429, ProviderQuotaError), (401, ProviderAuthError), (502, ProviderUnavailableError)],
+)
+def test_a_gateway_page_still_fails_by_its_status(status, error):
+    fake = FakeSeoSignal()
+    fake.fail_with = RawResponse(status, "<html>gateway</html>")
+    with pytest.raises(error):
+        SeoSignalSearchVolume(client(fake)).search_volumes(["x"])
+
+
+def test_a_gateway_429_still_marks_the_day_spent():
+    fake = FakeSeoSignal()
+    fake.fail_with = RawResponse(429, "<html>Too Many Requests</html>")
+    service, budget, _ = cached_volumes(fake)
+    service.lookup(["کفش مردانه"])
+    assert budget.remaining() == 0
 
 
 def test_the_key_check_asks_no_keyword():
@@ -254,3 +275,11 @@ def test_the_budget_resets_at_midnight_tehran_time():
     with pytest.raises(BudgetExhaustedError):
         RequestBudget(repository, scope="s", daily_limit=1, clock=lambda: before).consume()
     RequestBudget(repository, scope="s", daily_limit=1, clock=lambda: after).consume()
+
+
+def test_no_raw_byte_order_mark_hides_in_the_adapter_source():
+    # Written as an escape, so an editor cannot silently drop it.
+    import app.keyword_intel.seosignal as module
+
+    source = open(module.__file__, encoding="utf-8").read()
+    assert chr(0xFEFF) not in source

@@ -8,9 +8,18 @@ from app.models.keyword_intel import KeywordVolume
 
 
 class KeywordProviderError(RuntimeError):
-    """A provider call failed. The message is safe to show an operator."""
+    """A provider call failed.
+
+    The message is safe to show a customer. ``detail`` holds what the
+    provider itself said, for the operator's logs and probes only: it can
+    name the provider and its internals.
+    """
 
     retryable = False
+
+    def __init__(self, message: str, *, detail: str = "") -> None:
+        super().__init__(message)
+        self.detail = detail
 
 
 class ProviderAuthError(KeywordProviderError):

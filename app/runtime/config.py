@@ -47,7 +47,7 @@ class RuntimeConfig(BaseModel):
     arvan_model: str | None = None
     arvan_api_key_ref: str | None = Field(default=None, repr=False)
 
-    # Keyword demand and rank tracking. The provider is a setting, not code:
+    # Keyword demand (search volume). The provider is a setting, not code:
     # see app.keyword_intel.
     keyword_provider: str = Field(default="none", pattern=r"^(none|seosignal)$")
     seosignal_api_key_ref: str | None = Field(default=None, repr=False)

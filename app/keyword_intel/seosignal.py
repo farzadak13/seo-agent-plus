@@ -80,7 +80,7 @@ def default_transport(url: str, headers: dict[str, str], body: dict, timeout: fl
 
 def parse_body(text: str) -> Any:
     """JSON, after the byte-order marks SEO Signal puts in front of it."""
-    cleaned = text.lstrip("﻿").strip()
+    cleaned = text.lstrip("\ufeff").strip()
     if not cleaned:
         return None
     try:
@@ -129,24 +129,37 @@ def _error(status: int, payload: Any, text: str) -> KeywordProviderError:
     error = payload.get("error") if isinstance(payload, dict) else None
     code = error.get("code") if isinstance(error, dict) else None
     if code is None:
-        # Not the documented shape at all. Say what did come back, briefly:
-        # "HTTP 200" alone sent the last investigation in the wrong direction.
-        preview = " ".join(text.lstrip("﻿").split())[:120]
-        return KeywordProviderError(
-            f"SEO Signal: unexpected answer (HTTP {status}): {preview or 'empty body'}"
+        # Not the documented shape: often a gateway's HTML page in front of
+        # the service. The kind of failure still follows from the status, so
+        # a 429 still marks the day spent. What came back is kept for the
+        # operator in ``detail``; "HTTP 200" alone once sent an investigation
+        # the wrong way.
+        preview = " ".join(text.lstrip("\ufeff").split())[:120]
+        kind = KeywordProviderError
+        if status == 401:
+            kind = ProviderAuthError
+        elif status == 429:
+            kind = ProviderQuotaError
+        elif status >= 500 or status == 0:
+            kind = ProviderUnavailableError
+        return kind(
+            f"The keyword data service gave an unexpected answer (HTTP {status}).",
+            detail=preview or "empty body",
         )
-    message = f"SEO Signal: {code}"
+    # Customers see what kind of problem it is; the provider's own code is
+    # kept in ``detail`` for the operator.
+    detail = f"SEO Signal: {code}"
     if code in {"INVALID_API_KEY", "ACCOUNT_DISABLED"}:
-        return ProviderAuthError(message)
+        return ProviderAuthError("The keyword data service refused our credentials.", detail=detail)
     if code == "PLAN_NOT_ALLOWED":
-        return ProviderPlanError(message)
+        return ProviderPlanError("The keyword data service plan does not include this.", detail=detail)
     if code == "RATE_LIMIT_EXCEEDED":
-        return ProviderQuotaError(message)
+        return ProviderQuotaError("The keyword data service's daily limit is reached.", detail=detail)
     if code == "REQUEST_FAILED":
-        return NoDataError(message)
+        return NoDataError("The keyword data service found nothing.", detail=detail)
     if status >= 500:
-        return ProviderUnavailableError(message)
-    return KeywordProviderError(message)
+        return ProviderUnavailableError("The keyword data service is unavailable.", detail=detail)
+    return KeywordProviderError("The keyword data service refused the request.", detail=detail)
 
 
 def _competition(label: Any) -> Competition:
@@ -190,7 +203,7 @@ class SeoSignalSearchVolume:
         except (ProviderAuthError, ProviderPlanError, ProviderUnavailableError):
             raise
         except KeywordProviderError as exc:
-            if "INVALID_PARAMS" in str(exc):
+            if exc.detail == "SEO Signal: INVALID_PARAMS":
                 return
             raise
 

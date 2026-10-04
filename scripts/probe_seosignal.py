@@ -37,6 +37,8 @@ def main() -> int:
         volumes.check_key()
     except KeywordProviderError as exc:
         print(f"FAILED: {type(exc).__name__}: {exc}")
+        if exc.detail:
+            print(f"the service said: {exc.detail}")
         return 1
     print("ok: the key and plan are accepted")
 
@@ -46,6 +48,8 @@ def main() -> int:
             [volume] = volumes.search_volumes([sys.argv[1]])
         except KeywordProviderError as exc:
             print(f"FAILED: {type(exc).__name__}: {exc}")
+            if exc.detail:
+                print(f"the service said: {exc.detail}")
             return 1
         print(f"  {volume.keyword}: {volume.search_volume} / month, competition {volume.competition.value}")
     return 0
