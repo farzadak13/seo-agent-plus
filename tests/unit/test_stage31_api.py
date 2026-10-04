@@ -6,6 +6,7 @@ from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.onboarding.site_store import SiteStore
 from app.persistence.memory import InMemoryRepository
 from app.runs.store import RunStore
+from tests.unit.ownership_helpers import mark_verified
 
 
 API_KEY = "stage31-secret"
@@ -72,12 +73,13 @@ def test_get_site():
 
 
 def test_configure_gsc():
-    client, *_ = make_client()
+    client, _, site_store, _ = make_client()
     client.post(
         "/v1/sites",
         headers=headers(),
         json={"name": "Example", "base_url": "https://example.com"},
     )
+    mark_verified(site_store, "site-api-001")
     response = client.put(
         "/v1/sites/site-api-001/connections/gsc",
         headers=headers(),
@@ -138,6 +140,7 @@ def test_create_and_get_run():
         headers=headers(),
         json={"name": "Example", "base_url": "https://example.com"},
     )
+    mark_verified(site_store, "site-api-001")
     client.put(
         "/v1/sites/site-api-001/connections/gsc",
         headers=headers(),

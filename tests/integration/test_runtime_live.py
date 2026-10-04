@@ -101,6 +101,9 @@ def onboard_site(client):
     )
     assert created.status_code == 201, created.text
     site_id = created.json()["site_id"]
+    from tests.unit.ownership_helpers import mark_verified
+
+    mark_verified(client.app.state.runtime.site_store, site_id)
 
     configured = client.put(
         f"/v1/sites/{site_id}/connections/gsc",

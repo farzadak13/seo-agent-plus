@@ -54,6 +54,8 @@ def setup_api(monkeypatch, missing_baseline=False):
     client=TestClient(app);client.headers['Authorization']='Bearer test-key'
     response=client.post('/v1/sites',json={'name':'Example','base_url':'https://example.com'})
     site_id=response.json()['site_id']
+    from tests.unit.ownership_helpers import mark_verified
+    mark_verified(app.state.runtime.site_store,site_id)
     assert client.put(f'/v1/sites/{site_id}/connections/gsc',json={'property_url':'https://example.com',
         'credential_ref':'TEST_GSC_TOKEN'}).status_code==200
     return client,app.state.runtime,site_id,calls

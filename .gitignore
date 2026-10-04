@@ -45,3 +45,6 @@ secrets/
 # Release archives built by `git archive`.
 release.tgz
 *.tgz
+
+# Personal Claude Code permissions; not shared.
+.claude/settings.local.json

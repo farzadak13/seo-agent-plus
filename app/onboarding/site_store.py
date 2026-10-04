@@ -4,7 +4,15 @@ from datetime import datetime, timezone
 
 from app.models.persistence import PersistenceRecord
 from app.models.sites import Site
-from app.persistence.contracts import PersistenceNotFoundError, Repository
+from app.persistence.contracts import (
+    PersistenceConflictError,
+    PersistenceNotFoundError,
+    Repository,
+)
+
+
+class SiteChangedError(PersistenceConflictError):
+    """The site was changed by someone else since it was read."""
 
 
 SITE_AGGREGATE_TYPE = "site"
@@ -38,6 +46,13 @@ class SiteStore:
             raise PersistenceNotFoundError(
                 f"site not found: {site.site_id}"
             )
+        # Every write stamps updated_at, so the stamp a copy carries says which
+        # version it was read from. A copy read before someone else's write
+        # (a slow ownership check racing a credential change, say) would
+        # otherwise put the older settings back without anyone noticing.
+        stored_at = Site.model_validate(current.payload).updated_at
+        if site.updated_at != stored_at:
+            raise SiteChangedError(f"site changed since it was read: {site.site_id}")
         updated = site.model_copy(
             update={"updated_at": datetime.now(timezone.utc)}
         )

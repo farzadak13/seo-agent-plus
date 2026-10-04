@@ -192,7 +192,7 @@ def test_a_connector_on_a_subdomain_cannot_prove_the_domain():
     )
     method, reasons = verifier.verify(site)
     assert method is None
-    assert any("own host" in reason for reason in reasons)
+    assert any("own root" in reason for reason in reasons)
 
 
 def test_a_wordpress_living_on_a_path_cannot_prove_the_domain():
@@ -250,3 +250,125 @@ def test_the_refusal_does_not_list_other_customers_properties():
     assert response.status_code == 422
     assert "competitor.ir" not in response.text
     assert response.json()["detail"]["available"] == ["https://tennisino.com/"]
+
+
+# ---- b, c, d ---------------------------------------------------------------
+
+
+def _runs_client(site):
+    from app.runs.store import RunStore
+
+    repository = InMemoryRepository()
+    sites = SiteStore(repository)
+    sites.create(site)
+    app = create_app(
+        APIDependencies(
+            scheduler=JobScheduler(store=JobStore(repository), handlers=JobHandlerRegistry()),
+            authenticator=APIKeyAuthenticator("k", principal_id="p1"),
+            site_store=sites,
+            run_store=RunStore(repository),
+        )
+    )
+    client = TestClient(app)
+    client.headers["Authorization"] = "Bearer k"
+    return client
+
+
+RUN = {
+    "start_date": "2026-09-01", "end_date": "2026-09-07",
+    "normalized_url": "https://tennisino.com/x", "normalized_query": "q", "candidate_id": "c",
+}
+
+
+def _gsc_site(property_url, *, verified):
+    from datetime import datetime, timezone
+
+    from app.models.sites import GSCConnectionConfig, SecretRef
+
+    return Site(
+        site_id="s1", principal_id="p1", name="T", base_url="https://tennisino.com/",
+        gsc=GSCConnectionConfig(
+            property_url=property_url, credential_ref=SecretRef(key="GSC_SERVICE_ACCOUNT_JSON"),
+            auth_mode="service_account",
+        ),
+        ownership_method="meta_tag" if verified else None,
+        ownership_verified_at=datetime.now(timezone.utc) if verified else None,
+    )
+
+
+def test_every_analysis_rechecks_ownership():
+    # Configured before the check existed: the analysis is refused until proved.
+    client = _runs_client(_gsc_site("https://tennisino.com/", verified=False))
+    assert client.post("/v1/sites/s1/runs", json=RUN).status_code == 409
+
+
+def test_an_analysis_of_another_domains_property_is_refused():
+    client = _runs_client(_gsc_site("sc-domain:competitor.ir", verified=True))
+    assert client.post("/v1/sites/s1/runs", json=RUN).status_code == 409
+
+
+def test_a_verified_site_on_its_own_property_runs():
+    client = _runs_client(_gsc_site("https://tennisino.com/", verified=True))
+    assert client.post("/v1/sites/s1/runs", json=RUN).status_code == 202
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"base_url": "https://tennisino.com/~user/"},
+        {"base_url": "https://tennisino.com/?x=1"},
+        {"api_prefix": "/~user/fake"},
+    ],
+)
+def test_a_connector_off_the_standard_root_cannot_prove_ownership(config):
+    from app.models.sites import SiteAdapterConnection
+
+    site = make_site(site_adapter=SiteAdapterConnection(adapter_type="hoshyarseo", config=config))
+    verifier = OwnershipVerifier(
+        adapter_factory=Factory({"can_verify_ownership": True, "home_url": "https://tennisino.com/"}),
+        fetch_html=lambda url: "",
+    )
+    assert verifier.verify(site)[0] is None
+
+
+def test_the_connection_goes_to_the_address_that_was_checked(monkeypatch):
+    # The customer's DNS answers "public" to the check, then "loopback".
+    from app.net.guard import _PinnedHTTPConnection
+
+    answers = iter(["93.184.216.34", "127.0.0.1"])
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (next(answers), 80))],
+    )
+    connected = []
+    monkeypatch.setattr(socket, "create_connection", lambda address, *a: connected.append(address))
+
+    ensure_public_url("http://rebind.example/")  # first answer: public
+    connection = _PinnedHTTPConnection("rebind.example", 80)
+    with pytest.raises(UnsafeAddressError):
+        connection.connect()  # second answer: loopback, refused before connecting
+    assert connected == []
+
+
+def test_a_redirect_from_https_to_http_is_not_followed(monkeypatch):
+    from app.net.guard import _CheckedRedirects
+
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80))],
+    )
+    with pytest.raises(UnsafeAddressError):
+        _CheckedRedirects("https://tennisino.com/").redirect_request(
+            None, None, 301, "Moved", {}, "http://tennisino.com/"
+        )
+
+
+def test_a_site_written_from_a_stale_copy_is_refused():
+    from app.onboarding.site_store import SiteChangedError
+
+    sites = SiteStore(InMemoryRepository())
+    original = sites.create(make_site())
+    sites.update(original.model_copy(update={"name": "renamed by someone else"}))
+    with pytest.raises(SiteChangedError):
+        sites.update(original.model_copy(update={"ownership_method": "meta_tag"}))
+    assert sites.get("s1").name == "renamed by someone else"

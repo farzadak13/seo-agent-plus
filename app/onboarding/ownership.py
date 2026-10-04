@@ -23,6 +23,7 @@ from html.parser import HTMLParser
 from urllib.parse import urlparse
 from urllib.request import Request
 
+from app.models.sites import SecretProvider
 from app.net.guard import UnsafeAddressError, open_public, same_site
 
 
@@ -30,6 +31,12 @@ META_NAME = "hoshyarseo-site-verification"
 METHOD_CONNECTOR = "wordpress_connector"
 METHOD_META_TAG = "meta_tag"
 USER_AGENT = "HoshyarSEO/0.1 (+https://hoshyarseo.ir)"
+DEFAULT_CONNECTOR_PREFIX = "/wp-json/hoshyarseo/v1"
+
+
+def credential_is_shared(reference) -> bool:
+    """An environment credential is the operator's, and so every tenant's."""
+    return reference.provider == SecretProvider.ENVIRONMENT
 
 
 def new_token() -> str:
@@ -127,11 +134,18 @@ class OwnershipVerifier:
 
     def _via_connector(self, site) -> tuple[str | None, str]:
         site_url = str(site.base_url)
-        configured = (site.site_adapter.config or {}).get("base_url")
-        if configured is not None and not same_site(str(configured), site_url):
-            # A subdomain is allowed as an API host for writing, but anyone
-            # holding some subdomain could answer for the whole domain.
-            return None, "The connector must answer on the site's own host to prove ownership."
+        config = site.site_adapter.config or {}
+        configured = config.get("base_url")
+        if configured is not None:
+            parsed = urlparse(str(configured))
+            # A subdomain or a path is allowed as an API host for writing,
+            # but whoever holds some subdomain, or some directory on shared
+            # hosting, could answer for the whole domain from there.
+            if not same_site(str(configured), site_url) or parsed.path not in {"", "/"} or parsed.query:
+                return None, "The connector must answer at the site's own root to prove ownership."
+        if config.get("api_prefix", DEFAULT_CONNECTOR_PREFIX) != DEFAULT_CONNECTOR_PREFIX:
+            # Any other prefix could point at a static file someone placed.
+            return None, "The connector must use its standard address to prove ownership."
         try:
             adapter = self._adapter_factory.build(site)
         except Exception:

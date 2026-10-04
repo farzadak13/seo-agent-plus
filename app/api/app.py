@@ -42,7 +42,7 @@ from app.models.sites import (
 )
 from app.onboarding.ownership import meta_tag as ownership_meta_tag
 from app.onboarding.ownership import new_token as new_ownership_token
-from app.onboarding.ownership import property_matches_site
+from app.onboarding.ownership import credential_is_shared, property_matches_site
 from app.onboarding.site_store import SiteStore
 from app.persistence.contracts import (
     InvalidCursorError,
@@ -107,6 +107,17 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         ),
     ) -> str:
         return dependencies.authenticator.authenticate(credentials)
+
+    @app.exception_handler(PersistenceConflictError)
+    def conflict(_request, exc):
+        # Two writes raced; the losing one is refused rather than allowed to
+        # undo the other. Retrying with a fresh read is always safe.
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "This changed while the request was being handled; reload and try again."},
+        )
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -217,7 +228,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         """
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
-        shared = _require_ownership_for_shared_credential(site, request.auth_mode)
+        shared = _require_ownership_for_shared_credential(site)
         if dependencies.gsc_property_lister is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -248,7 +259,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> SiteResponse:
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
-        shared = _require_ownership_for_shared_credential(site, request.auth_mode)
+        shared = _require_ownership_for_shared_credential(site)
         if shared:
             if not property_matches_site(request.property_url, str(site.base_url)):
                 raise HTTPException(
@@ -440,6 +451,15 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="GSC is not configured for this site.",
             )
+        # Checked on every analysis, not only when connecting: a site set up
+        # before ownership was required, or one whose property was changed by
+        # other means, must not keep reading through the shared account.
+        if _require_ownership_for_shared_credential(site, site.gsc.credential_ref):
+            if not property_matches_site(site.gsc.property_url, str(site.base_url)):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="The connected property is not this site's own domain.",
+                )
 
         run_store = _require_run_store(dependencies)
         job = Job(
@@ -634,9 +654,15 @@ def _ownership_response(site: Site) -> dict:
     }
 
 
-def _require_ownership_for_shared_credential(site: Site, auth_mode: str) -> bool:
-    """True when the credential is shared across tenants; then ownership is required."""
-    if auth_mode != "service_account":
+def _require_ownership_for_shared_credential(site: Site, credential: SecretRef | None = None) -> bool:
+    """Require proof of ownership whenever the credential is the operator's.
+
+    Every credential named from the server's environment is the operator's
+    and so shared by every tenant, whatever kind it is; only a credential the
+    tenant granted themselves (their own Google sign-in) is theirs alone.
+    Returns True when the credential is shared.
+    """
+    if credential is not None and not credential_is_shared(credential):
         return False
     if site.ownership_verified_at is None:
         raise HTTPException(

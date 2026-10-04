@@ -3,19 +3,19 @@
 هر بلوک را به ترتیب اجرا کن. دستورهای «روی ویندوز» در PowerShell داخل
 `D:\Projects\SEOAGENT`، و دستورهای «روی سرور» بعد از `ssh seo-deploy`.
 
-## ۱. ساختن و فرستادن نسخهٔ جدید (روی ویندوز)
+## ۱ و ۲. فرستادن و نصب نسخهٔ جدید
 
-    git archive --format=tar.gz -o release.tgz main
-    scp release.tgz seo-deploy:/tmp/
+روی ویندوز (Git Bash)، یا Claude برایت اجرا می‌کند:
 
-## ۲. نصب نسخه (روی سرور)
+    bash deploy/ship.sh upload
 
-    mkdir -p ~/release && tar -xzf /tmp/release.tgz -C ~/release deploy
-    cd ~/release/deploy
-    sudo bash app-release.sh /tmp/release.tgz
+همهٔ کارهای بدون sudo را انجام می‌دهد و در آخر **یک دستور sudo** چاپ می‌کند
+که باید خودت در ترمینال سرور (`ssh seo-deploy`) بزنی. بعدش:
+
+    bash deploy/ship.sh check
 
 `app-release.sh` اگر `/readyz` جواب ندهد خودش به نسخهٔ قبل برمی‌گردد.
-از اینجا به بعد اسکریپت‌ها را از نسخهٔ نصب‌شده اجرا کن:
+اسکریپت‌های بعدی را از نسخهٔ نصب‌شده اجرا کن:
 
     cd /opt/seoagent/current/deploy
 
@@ -30,6 +30,11 @@
 backup ها نگه دار. بدون آن کلید، رمزهای ذخیره‌شدهٔ سایت‌ها قابل خواندن نیستند.
 
 ## ۴. اتصال tennisino.com (روی سرور)
+
+> بعد از این نسخه، هر سایتی که از service account مشترک استفاده می‌کند باید
+> مالکیتش ثابت شده باشد، وگرنه تحلیل رد می‌شود. pama.shop هم شامل این است:
+> یا meta tag را روی صفحهٔ اولش بگذار (`GET /v1/sites/{id}/ownership`) یا
+> بعد از راه افتادن ورود با گوگل، با آن وصلش کن.
 
 اول ببین Search Console این property را با چه رشته‌ای می‌شناسد:
 
