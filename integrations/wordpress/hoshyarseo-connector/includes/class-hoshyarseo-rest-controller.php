@@ -160,9 +160,12 @@ class HoshyarSEO_REST_Controller {
 	public function status() {
 		return rest_ensure_response(
 			array(
-				'plugin_version' => HOSHYARSEO_CONNECTOR_VERSION,
-				'seo_plugins'    => $this->detect_seo_plugins(),
-				'home_url'       => home_url( '/' ),
+				'plugin_version'       => HOSHYARSEO_CONNECTOR_VERSION,
+				'seo_plugins'          => $this->detect_seo_plugins(),
+				'home_url'             => home_url( '/' ),
+				// An Editor or above can prove the site is theirs to HoshyarSEO.
+				// A Contributor or Author account on someone else's site cannot.
+				'can_verify_ownership' => current_user_can( 'edit_others_posts' ),
 			)
 		);
 	}

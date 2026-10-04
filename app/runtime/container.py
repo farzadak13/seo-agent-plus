@@ -14,6 +14,7 @@ from app.api.auth import TenantAPIKeyAuthenticator
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.observability import InMemoryEventSink, InMemoryMetricsSink, ObservabilityContext
 from app.onboarding.secrets import EnvironmentSecretResolver
+from app.onboarding.ownership import OwnershipVerifier
 from app.onboarding.vault import CompositeSecretResolver, Keyring, SecretVault
 from app.onboarding.site_store import SiteStore
 from app.persistence.postgres import PostgresRepository
@@ -206,6 +207,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             gsc_property_lister=container.gsc_property_lister,
             action_store=container.action_store,
             vault=container.vault,
+            ownership_verifier=OwnershipVerifier(adapter_factory=container.adapters),
         )
     )
     app.router.lifespan_context = lifespan

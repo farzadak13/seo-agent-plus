@@ -40,6 +40,9 @@ from app.models.sites import (
     Site,
     SiteAdapterConnection,
 )
+from app.onboarding.ownership import meta_tag as ownership_meta_tag
+from app.onboarding.ownership import new_token as new_ownership_token
+from app.onboarding.ownership import property_matches_site
 from app.onboarding.site_store import SiteStore
 from app.persistence.contracts import (
     InvalidCursorError,
@@ -71,6 +74,7 @@ class APIDependencies:
         transaction_factory=None,
         adapter_factory=None,
         gsc_property_lister=None,
+        ownership_verifier=None,
         action_store: ManagedActionStore | None = None,
         vault=None,
     ) -> None:
@@ -83,6 +87,7 @@ class APIDependencies:
         # None means we cannot ask Google which properties exist (stub mode).
         # The property is then taken on trust, as it was before.
         self.gsc_property_lister = gsc_property_lister
+        self.ownership_verifier = ownership_verifier
         self.scheduler = scheduler
         self.authenticator = authenticator
         self.job_id_factory = job_id_factory or (lambda: f"job-{uuid4().hex}")
@@ -212,6 +217,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         """
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
+        shared = _require_ownership_for_shared_credential(site, request.auth_mode)
         if dependencies.gsc_property_lister is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -225,6 +231,13 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
             ) from exc
+        if shared:
+            # The shared account sees every customer's property. Only this
+            # site's own may reach this tenant, not even their names.
+            properties = [
+                item for item in properties
+                if property_matches_site(item.site_url, str(site.base_url))
+            ]
         return AvailableGSCPropertiesResponse.from_properties(properties)
 
     @app.put("/v1/sites/{site_id}/connections/gsc", response_model=SiteResponse)
@@ -235,6 +248,13 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> SiteResponse:
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
+        shared = _require_ownership_for_shared_credential(site, request.auth_mode)
+        if shared:
+            if not property_matches_site(request.property_url, str(site.base_url)):
+                raise HTTPException(
+                    status_code=422,
+                    detail="The property must be this site's own domain.",
+                )
         if dependencies.gsc_property_lister is not None:
             # Refuse a property Google does not report, rather than storing it
             # and failing on the first run with a 403 that names nothing.
@@ -249,6 +269,13 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             chosen = next(
                 (item for item in properties if item.matches(request.property_url)), None
             )
+            if shared:
+                # The refusal below lists what is available; with the shared
+                # account that must not include other customers' properties.
+                properties = [
+                    item for item in properties
+                    if property_matches_site(item.site_url, str(site.base_url))
+                ]
             if chosen is None:
                 raise HTTPException(
                     status_code=422,
@@ -453,6 +480,34 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         _ensure_owner(run.principal_id, authenticated_principal_id)
         return RunResponse.from_run(run)
 
+    @app.get("/v1/sites/{site_id}/ownership")
+    def get_ownership(site_id: str, authenticated_principal_id: str = Depends(principal_id)):
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, authenticated_principal_id)
+        if site.verification_token is None:
+            site = _require_site_store(dependencies).update(
+                site.model_copy(update={"verification_token": new_ownership_token()})
+            )
+        return _ownership_response(site)
+
+    @app.post("/v1/sites/{site_id}/ownership/verify")
+    def verify_ownership(site_id: str, authenticated_principal_id: str = Depends(principal_id)):
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, authenticated_principal_id)
+        if dependencies.ownership_verifier is None:
+            raise HTTPException(status_code=503, detail="Ownership verification is not configured.")
+        method, reasons = dependencies.ownership_verifier.verify(site)
+        if method is not None:
+            site = _require_site_store(dependencies).update(
+                site.model_copy(
+                    update={
+                        "ownership_method": method,
+                        "ownership_verified_at": datetime.now(timezone.utc),
+                    }
+                )
+            )
+        return {**_ownership_response(site), "reasons": reasons}
+
     # Stage 37 — nothing reaches a customer's site without a person saying yes.
 
     @app.get("/v1/sites/{site_id}/actions", response_model=ActionListResponse)
@@ -567,6 +622,31 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         return ActionResponse.from_managed(requested, job_id=job.job_id)
 
     return app
+
+
+def _ownership_response(site: Site) -> dict:
+    return {
+        "site_id": site.site_id,
+        "verified": site.ownership_verified_at is not None,
+        "method": site.ownership_method,
+        "verified_at": site.ownership_verified_at,
+        "meta_tag": ownership_meta_tag(site.verification_token) if site.verification_token else None,
+    }
+
+
+def _require_ownership_for_shared_credential(site: Site, auth_mode: str) -> bool:
+    """True when the credential is shared across tenants; then ownership is required."""
+    if auth_mode != "service_account":
+        return False
+    if site.ownership_verified_at is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Prove this site is yours first (POST /v1/sites/{site_id}/ownership/verify): "
+                "connect the HoshyarSEO Connector plugin, or add the verification meta tag."
+            ),
+        )
+    return True
 
 
 def _require_action_store(dependencies: APIDependencies) -> ManagedActionStore:

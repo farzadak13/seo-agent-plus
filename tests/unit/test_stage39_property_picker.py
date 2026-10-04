@@ -200,12 +200,15 @@ def test_an_exhausted_quota_is_reported_as_retryable():
 # --- onboarding through the API ---------------------------------------------
 
 
-def api(lister=None):
+def api(lister=None, *, verified=True):
+    from datetime import datetime, timezone
+
     repository = InMemoryRepository()
+    sites = SiteStore(repository)
     dependencies = APIDependencies(
         scheduler=JobScheduler(store=JobStore(repository), handlers=JobHandlerRegistry()),
         authenticator=APIKeyAuthenticator("test-key"),
-        site_store=SiteStore(repository),
+        site_store=sites,
         run_store=RunStore(repository),
         gsc_property_lister=lister,
     )
@@ -214,6 +217,12 @@ def api(lister=None):
     site_id = client.post(
         "/v1/sites", json={"name": "PAMA", "base_url": "https://pama.shop"}
     ).json()["site_id"]
+    if verified:
+        sites.update(
+            sites.get(site_id).model_copy(
+                update={"ownership_method": "meta_tag", "ownership_verified_at": datetime.now(timezone.utc)}
+            )
+        )
     return client, site_id
 
 
@@ -232,6 +241,8 @@ def test_the_customer_is_shown_what_to_pick_rather_than_asked_to_type():
     lister = listing(
         GSCProperty(site_url="sc-domain:pama.shop", permission_level="siteOwner"),
         GSCProperty(site_url="https://pama.shop/", permission_level="siteFullUser"),
+        # Another customer's, visible to the shared account: never shown here.
+        GSCProperty(site_url="sc-domain:competitor.ir", permission_level="siteFullUser"),
     )
     client, site_id = api(lister)
 
@@ -338,3 +349,32 @@ def test_another_tenants_site_cannot_be_probed_for_properties():
 
     assert response.status_code in {401, 403, 404}
     assert lister.calls == [], "Google must not be called on behalf of a stranger"
+
+
+def test_an_unverified_site_sees_no_properties_of_the_shared_account():
+    lister = listing(GSCProperty("https://pama.shop/", "siteOwner"))
+    client, site_id = api(lister, verified=False)
+
+    response = client.post(
+        f"/v1/sites/{site_id}/connections/gsc/available",
+        json={"credential_ref": "GSC_KEY", "auth_mode": "service_account"},
+    )
+
+    assert response.status_code == 409
+    assert lister.calls == [], "Google is not even asked"
+
+
+def test_another_domains_property_cannot_be_connected_even_if_listed():
+    client, site_id = api(listing(GSCProperty("sc-domain:competitor.ir", "siteOwner")))
+
+    response = client.put(
+        f"/v1/sites/{site_id}/connections/gsc",
+        json={
+            "property_url": "sc-domain:competitor.ir",
+            "credential_ref": "GSC_KEY",
+            "auth_mode": "service_account",
+        },
+    )
+
+    assert response.status_code == 422
+    assert client.get(f"/v1/sites/{site_id}").json()["gsc_configured"] is False

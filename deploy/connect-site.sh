@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
-# Connect a WordPress site: create it, link its Search Console property, and
-# store its application password encrypted.
+# Connect a WordPress site: create it, store its application password
+# encrypted, prove it is yours through the connector plugin, then link its
+# Search Console property. Only the property of this same domain is offered:
+# the shared service account can see every customer's property.
 #
 #   sudo bash connect-site.sh <site-url> <search-console-property> [name]
 #   sudo bash connect-site.sh https://tennisino.com/ https://tennisino.com/ Tennisino
@@ -48,7 +50,13 @@ set +a
 KEY="${SEO_AGENT_TENANT_KEY:-}"
 [[ -n "$KEY" ]] || fail "SEO_AGENT_TENANT_KEY is not set; run bind-tenant-key.sh first"
 
-AUTH="authorization: bearer ${KEY}"
+# The key goes to curl through a private file, not as an argument: arguments
+# are visible to every user on the machine through `ps`.
+AUTH_FILE="$(mktemp)"
+chmod 600 "$AUTH_FILE"
+trap 'rm -f "$AUTH_FILE"' EXIT
+printf 'authorization: bearer %s\n' "$KEY" > "$AUTH_FILE"
+AUTH="@${AUTH_FILE}"
 JSON="content-type: application/json"
 field() { python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$1"; }
 api() {
@@ -71,11 +79,6 @@ SITE="$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"base_
   | api POST /v1/sites -)"
 SITE_ID="$(field site_id <<<"$SITE")"
 echo "site_id: ${SITE_ID}"
-
-say "Search Console property: ${PROPERTY}"
-python3 -c 'import json,sys; print(json.dumps({"property_url":sys.argv[1],"credential_ref":sys.argv[2],"auth_mode":"service_account"}))' \
-  "$PROPERTY" "$CRED_REF" | api PUT "/v1/sites/${SITE_ID}/connections/gsc" - > /dev/null
-echo "connected"
 
 say "WordPress credentials"
 read -rp  "WordPress username: " WP_USER
@@ -100,6 +103,17 @@ CHECK="$(api POST "/v1/sites/${SITE_ID}/connections/site-adapter/check")"
 python3 -c 'import json,sys; d=json.load(sys.stdin); print("ok" if d["ok"] else "NOT OK"); print(json.dumps(d["detail"], ensure_ascii=False, indent=2))' <<<"$CHECK"
 python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["ok"] else 1)' <<<"$CHECK" \
   || fail "the site did not accept the connection; the message above says why"
+
+say "proving the site is yours"
+OWNED="$(api POST "/v1/sites/${SITE_ID}/ownership/verify")"
+python3 -c 'import json,sys; d=json.load(sys.stdin); print("verified by", d["method"]) if d["verified"] else print("NOT verified:", "; ".join(d["reasons"]))' <<<"$OWNED"
+python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin)["verified"] else 1)' <<<"$OWNED" \
+  || fail "ownership could not be proved; use an Editor or Administrator account"
+
+say "Search Console property: ${PROPERTY}"
+python3 -c 'import json,sys; print(json.dumps({"property_url":sys.argv[1],"credential_ref":sys.argv[2],"auth_mode":"service_account"}))' \
+  "$PROPERTY" "$CRED_REF" | api PUT "/v1/sites/${SITE_ID}/connections/gsc" - > /dev/null
+echo "connected"
 
 say "done"
 echo "site_id ${SITE_ID}"

@@ -97,6 +97,13 @@ class Site(BaseModel):
     status: SiteStatus = SiteStatus.ACTIVE
     gsc: GSCConnectionConfig | None = None
     site_adapter: SiteAdapterConnection | None = None
+    # Proof that this tenant controls the site. Required before a shared
+    # Search Console credential may be pointed at the site's property: the
+    # shared service account can read every customer's property, so without
+    # this anyone could connect anyone's data. See app.onboarding.ownership.
+    verification_token: str | None = Field(default=None, max_length=100)
+    ownership_method: str | None = Field(default=None, max_length=50)
+    ownership_verified_at: datetime | None = None
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

@@ -24,6 +24,8 @@ from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
+from app.net.guard import UnsafeAddressError, open_public
+
 from app.models.execution import ExecutionCapability
 from app.models.site_adapter import (
     AdapterOperation,
@@ -43,7 +45,9 @@ class HoshyarConnectorConfig(BaseModel):
     base_url: HttpUrl
     username: str = Field(min_length=1)
     application_password: str = Field(min_length=1, repr=False)
-    api_prefix: str = "/wp-json/hoshyarseo/v1"
+    # A path only: a query or fragment here would let the configured prefix
+    # rewrite which endpoint the credentials are sent to.
+    api_prefix: str = Field(default="/wp-json/hoshyarseo/v1", pattern=r"^/[A-Za-z0-9/_.-]*$")
     timeout_seconds: float = Field(default=30.0, gt=0)
 
 
@@ -64,11 +68,13 @@ Transport = Callable[[str, str, dict[str, str], bytes | None, float], HTTPRespon
 
 def default_transport(method, url, headers, body, timeout) -> HTTPResponse:
     """Every status comes back as a response: the error body is the explanation."""
-    from urllib.request import Request, urlopen
+    from urllib.request import Request
 
     request = Request(url=url, data=body, headers=headers, method=method)
     try:
-        with urlopen(request, timeout=timeout) as response:
+        # The host is the customer's choice: never let it be this server's
+        # own network. See app.net.guard.
+        with open_public(request, timeout=timeout, same_host=True) as response:
             return HTTPResponse(response.status, response.read())
     except HTTPError as exc:
         return HTTPResponse(exc.code, exc.read())
@@ -76,6 +82,8 @@ def default_transport(method, url, headers, body, timeout) -> HTTPResponse:
         raise HoshyarConnectorError(f"Could not reach the site: {exc.reason}") from exc
     except TimeoutError as exc:
         raise HoshyarConnectorError("The site did not answer in time.") from exc
+    except UnsafeAddressError as exc:
+        raise HoshyarConnectorError(str(exc)) from exc
 
 
 class HoshyarConnectorAdapter:
@@ -113,8 +121,14 @@ class HoshyarConnectorAdapter:
     # --- reading ------------------------------------------------------------
 
     def status(self) -> dict[str, Any]:
-        """Plugin version and detected SEO plugins. A connection check."""
-        return self._call("GET", "/status")
+        """A connection check: only fields we know, never the raw answer."""
+        data = self._call("GET", "/status")
+        return {
+            "plugin_version": str(data.get("plugin_version", "")),
+            "seo_plugins": [str(item) for item in data.get("seo_plugins", []) if isinstance(item, str)],
+            "home_url": str(data.get("home_url", "")),
+            "can_verify_ownership": data.get("can_verify_ownership") is True,
+        }
 
     def read_page(self, *, site_id: str, normalized_url: str) -> SitePage:
         info = self._call("GET", "/page?url=" + quote(normalized_url, safe=""))
