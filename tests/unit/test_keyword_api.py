@@ -117,3 +117,17 @@ def test_a_coded_provider_error_is_generic_for_the_customer():
     response = client.post("/v1/keywords/volume", headers=AUTH, json={"keywords": ["کفش مردانه"]})
     assert response.status_code == 502
     assert "SEO Signal" not in response.text and "PLAN_NOT_ALLOWED" not in response.text
+
+
+def test_the_operator_finds_the_providers_words_in_the_service_log(caplog):
+    import logging
+
+    from app.keyword_intel.seosignal import RawResponse
+
+    client, fake = make()
+    fake.fail_with = RawResponse(503, "<html>upstream internal-host-7</html>")
+    with caplog.at_level(logging.WARNING, logger="app.api.app"):
+        client.post("/v1/keywords/volume", headers=AUTH, json={"keywords": ["کفش مردانه"]})
+    logged = " ".join(record.getMessage() for record in caplog.records)
+    assert "internal-host-7" in logged
+    assert "user@example.com:token" not in logged, "never the key"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from contextlib import nullcontext
 from urllib.parse import parse_qs
@@ -64,6 +65,8 @@ from app.persistence.contracts import (
 from app.runs.handler import SEO_RUN_JOB_TYPE
 from app.runs.store import RunStore
 
+
+log = logging.getLogger(__name__)
 
 SITE_SECRET_ENV_PREFIX = "SEO_AGENT_SITE_SECRET_"
 GOOGLE_ACCOUNT_AUTH_MODE = "oauth_refresh_token"
@@ -440,6 +443,13 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         try:
             return keywords.volumes_for(authenticated_principal_id).lookup(request.keywords)
         except KeywordProviderError as exc:
+            # The customer gets the generic message; what the provider really
+            # said goes to the service log (journalctl -u seoagent). It holds
+            # no credential: the key is only ever in a request header.
+            log.warning(
+                "keyword lookup failed for tenant %s: %s (%s)",
+                authenticated_principal_id, type(exc).__name__, exc.detail or "no detail",
+            )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
     @app.get("/v1/sites/{site_id}/capabilities")

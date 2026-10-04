@@ -23,6 +23,7 @@ port in contracts.py; nothing outside this file changes.
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from typing import Any
@@ -44,8 +45,10 @@ MAX_BULK_KEYWORDS = 1000
 
 # Competition is reported as a Persian word. Only "معمولی" appears in the
 # documentation; the others are the natural neighbours and anything else maps
-# to UNKNOWN rather than to a guess.
-_COMPETITION = {
+# to UNKNOWN rather than to a guess, and is logged so the real word can be
+# added. Both sides go through the query normaliser first, so the Arabic
+# letters (ي, ك) and stray spaces of the same word still match.
+_COMPETITION_WORDS = {
     "کم": Competition.LOW,
     "پایین": Competition.LOW,
     "معمولی": Competition.MEDIUM,
@@ -54,6 +57,11 @@ _COMPETITION = {
     "بالا": Competition.HIGH,
     "سخت": Competition.HIGH,
 }
+_COMPETITION = {normalize_query(word): level for word, level in _COMPETITION_WORDS.items()}
+# Each unrecognised word is logged once per process, not once per keyword.
+_UNRECOGNISED_LOGGED: set[str] = set()
+
+log = logging.getLogger(__name__)
 
 
 class RawResponse:
@@ -74,7 +82,10 @@ def default_transport(url: str, headers: dict[str, str], body: dict, timeout: fl
     try:
         response = requests.post(url, headers=headers, json=body, timeout=timeout)
     except requests.RequestException as exc:
-        raise ProviderUnavailableError(f"SEO Signal could not be reached: {type(exc).__name__}") from exc
+        raise ProviderUnavailableError(
+            "The keyword data service could not be reached.",
+            detail=f"SEO Signal unreachable: {type(exc).__name__}",
+        ) from exc
     return RawResponse(response.status_code, response.content.decode("utf-8", errors="replace"))
 
 
@@ -165,7 +176,19 @@ def _error(status: int, payload: Any, text: str) -> KeywordProviderError:
 def _competition(label: Any) -> Competition:
     if not isinstance(label, str):
         return Competition.UNKNOWN
-    return _COMPETITION.get(label.strip(), Competition.UNKNOWN)
+    level = _COMPETITION.get(normalize_query(label))
+    if level is not None:
+        return level
+    if label not in _UNRECOGNISED_LOGGED:
+        _UNRECOGNISED_LOGGED.add(label)
+        # repr and the codepoints, so the exact word can be added to the table
+        # even if the terminal shows Persian letters badly.
+        log.warning(
+            "SEO Signal sent an unrecognised competition word %r (%s); recorded as unknown",
+            label,
+            " ".join(f"U+{ord(ch):04X}" for ch in label),
+        )
+    return Competition.UNKNOWN
 
 
 def _int_or_none(value: Any) -> int | None:

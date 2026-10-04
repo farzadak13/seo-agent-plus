@@ -283,3 +283,54 @@ def test_no_raw_byte_order_mark_hides_in_the_adapter_source():
 
     source = open(module.__file__, encoding="utf-8").read()
     assert chr(0xFEFF) not in source
+
+
+# ---- competition words -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "word, level",
+    [
+        ("معمولی", Competition.MEDIUM),
+        ("معمولي", Competition.MEDIUM),  # Arabic yeh
+        (" زياد ", Competition.HIGH),  # Arabic yeh, stray spaces
+        ("كم", Competition.LOW),  # Arabic kaf
+    ],
+)
+def test_competition_words_match_after_normalisation(word, level):
+    from app.keyword_intel.seosignal import _competition
+
+    assert _competition(word) is level
+
+
+def test_an_unrecognised_competition_word_is_logged_once_with_its_codepoints(caplog):
+    import logging
+
+    from app.keyword_intel import seosignal
+
+    seosignal._UNRECOGNISED_LOGGED.discard("نامعلوم‌جدید")
+    with caplog.at_level(logging.WARNING, logger="app.keyword_intel.seosignal"):
+        assert seosignal._competition("نامعلوم‌جدید") is Competition.UNKNOWN
+        assert seosignal._competition("نامعلوم‌جدید") is Competition.UNKNOWN
+    records = [r for r in caplog.records if "unrecognised competition" in r.getMessage()]
+    assert len(records) == 1
+    assert "U+0646" in records[0].getMessage()
+
+
+def test_an_unreachable_service_is_not_named_to_the_customer():
+    import requests
+
+    from app.keyword_intel.seosignal import default_transport
+
+    def refuse(*args, **kwargs):
+        raise requests.ConnectionError("refused")
+
+    original = requests.post
+    requests.post = refuse
+    try:
+        with pytest.raises(ProviderUnavailableError) as raised:
+            default_transport("https://x/", {}, {}, 1)
+    finally:
+        requests.post = original
+    assert "SEO Signal" not in str(raised.value)
+    assert "ConnectionError" in raised.value.detail
