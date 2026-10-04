@@ -64,10 +64,26 @@ class SiteAdapterFactory:
         if any(k.lower() in {"authorization", "proxy-authorization", "cookie", "x-api-key"}
                for k in values.get("extra_headers", {})):
             raise ValueError("Credential headers must not be stored in config.")
-        values.setdefault("base_url", str(site.base_url))
+        # Credentials are sent to base_url. If the connection could name its
+        # own host, a credential (or any secret it can reference) could be
+        # pointed at a server of the requester's choosing. A separate API host
+        # is allowed only on the site's own domain.
+        values["base_url"] = _base_url_on_site(values.get("base_url"), str(site.base_url))
         for field, reference in connection.secret_refs.items():
             values[field] = self.secret_resolver.resolve(reference)
         adapter = builder(adapter_id=f"{connection.adapter_type}:{site.site_id}", config=model.model_validate(values))
         if enabled is not None:
             adapter = CapabilityLimitedAdapter(adapter, {ExecutionCapability(value) for value in enabled})
         return adapter
+
+
+def _base_url_on_site(requested, site_url: str) -> str:
+    from urllib.parse import urlparse
+
+    if requested is None:
+        return site_url
+    site_host = (urlparse(site_url).hostname or "").lower()
+    host = (urlparse(str(requested)).hostname or "").lower()
+    if not host or not (host == site_host or host.endswith("." + site_host)):
+        raise ValueError("The adapter's base_url must be on the site's own domain.")
+    return str(requested)

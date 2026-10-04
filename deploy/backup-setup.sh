@@ -74,7 +74,7 @@ cat > /usr/local/sbin/seoagent-restore-test <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 SCRATCH="${DB_NAME}_restore_test"
-LATEST="\$(ls -1t ${BACKUP_DIR}/${DB_NAME}-*.dump 2>/dev/null | head -n1)"
+LATEST="\$(ls -1t ${BACKUP_DIR}/${DB_NAME}-*.dump 2>/dev/null | head -n1 || true)"
 if [[ -z "\$LATEST" ]]; then
   echo "No backup found in ${BACKUP_DIR}. Run seoagent-backup first." >&2
   exit 1

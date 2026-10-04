@@ -201,5 +201,78 @@ def test_a_rollback_refused_by_the_site_is_recorded():
 
     stored = actions.get(pending.action_id)
     assert stored.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE
-    assert stored.history[-1].reason == "rollback_failed"
+    assert stored.history[-1].reason == "rollback_refused"
     assert wordpress.override == NEW_TITLE
+
+
+def _check_client(wordpress):
+    from fastapi.testclient import TestClient
+
+    from app.api.app import APIDependencies, create_app
+    from app.api.auth import APIKeyAuthenticator
+    from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
+
+    repository = InMemoryRepository()
+    sites = SiteStore(repository)
+    sites.create(make_site())
+    app = create_app(
+        APIDependencies(
+            scheduler=JobScheduler(store=JobStore(repository), handlers=JobHandlerRegistry()),
+            authenticator=APIKeyAuthenticator("k", principal_id="principal-1"),
+            site_store=sites,
+            adapter_factory=FakeAdapterFactory(make_adapter(wordpress, password="pw")),
+        )
+    )
+    return TestClient(app)
+
+
+def test_the_connection_check_reports_the_plugin():
+    response = _check_client(FakeWordPress()).post(
+        "/v1/sites/site-1/connections/site-adapter/check", headers={"Authorization": "Bearer k"}
+    )
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["detail"]["seo_plugins"] == ["yoast"]
+
+
+def test_the_connection_check_names_a_wrong_password_without_echoing_it():
+    response = _check_client(FakeWordPress(password="other")).post(
+        "/v1/sites/site-1/connections/site-adapter/check", headers={"Authorization": "Bearer k"}
+    )
+    body = response.json()
+    assert body["ok"] is False
+    assert "application password" in body["detail"]
+    assert "pw" not in body["detail"].split()
+
+
+def test_exact_rollback_trusts_the_site_not_a_stale_cache():
+    class CachedWordPress(FakeWordPress):
+        """Serves the HTML from before every change, as a page cache would."""
+
+        def rendered_title(self):
+            return TEMPLATE_TITLE
+
+    wordpress = CachedWordPress()
+    adapter = make_adapter(wordpress)
+    repository = InMemoryRepository()
+    actions = ManagedActionStore(repository)
+    sites = SiteStore(repository)
+    sites.create(make_site())
+    factory = FakeAdapterFactory(adapter)
+    pending = make_pending(current=TEMPLATE_TITLE)
+    actions.create(approve(pending, actor="principal-1"))
+
+    build_execute_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)(
+        {"action_id": pending.action_id}
+    )
+    applied = actions.get(pending.action_id)
+    # Stored on the site, cached on the page: verified, with a note.
+    assert applied.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE
+    assert "cached" in applied.history[-1].detail["note"]
+
+    build_rollback_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)(
+        {"action_id": pending.action_id}
+    )
+    # The cache already shows the old title; the override must still be removed.
+    assert wordpress.override is None
+    assert actions.get(pending.action_id).status == ActionStatus.ROLLED_BACK

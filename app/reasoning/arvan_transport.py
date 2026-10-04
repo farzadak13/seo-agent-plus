@@ -17,9 +17,14 @@ class ArvanTransportError(RuntimeError):
         failure_type: LLMFailureType,
         message: str,
         retryable: bool,
+        detail: str = "",
     ) -> None:
         self.failure_type = failure_type
         self.retryable = retryable
+        # The provider's own error body, for the operator (probe_llm.py prints
+        # it). Kept out of the message, which ends up on a run a customer can
+        # read, because some providers echo account details in error bodies.
+        self.detail = detail
 
         super().__init__(message)
 
@@ -122,8 +127,8 @@ class ArvanTransport:
                     ),
                     message=(
                         "Arvan AIaaS authentication failed."
-                        f"{detail}"
                     ),
+                    detail=detail,
                     retryable=False,
                 ) from exc
 
@@ -134,8 +139,8 @@ class ArvanTransport:
                     ),
                     message=(
                         "Arvan AIaaS rate limit exceeded."
-                        f"{detail}"
                     ),
+                    detail=detail,
                     retryable=True,
                 ) from exc
 
@@ -145,8 +150,9 @@ class ArvanTransport:
                 ),
                 message=(
                     f"Arvan AIaaS HTTP error: "
-                    f"{exc.code}{detail}"
+                    f"{exc.code}"
                 ),
+                detail=detail,
                 retryable=exc.code >= 500,
             ) from exc
 
@@ -341,4 +347,4 @@ def _error_detail(exc: error.HTTPError) -> str:
         return ""
     if not body:
         return ""
-    return f" Response: {body[:300]}"
+    return body[:300]

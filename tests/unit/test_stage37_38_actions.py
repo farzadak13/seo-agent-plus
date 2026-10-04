@@ -253,15 +253,17 @@ def test_a_page_edited_since_the_proposal_is_not_overwritten():
     assert stored.history[-1].reason == "page_changed_since_proposal"
 
 
-def test_a_second_delivery_after_a_crash_does_not_write_again():
-    # The first delivery wrote the title and died before recording it.
+def test_a_second_delivery_after_a_crash_repeats_the_write_under_the_same_key():
+    # The first delivery wrote the title and died before recording it. The
+    # repeat uses the same idempotency key, so the site returns the original
+    # change (and its id) instead of making another one.
     adapter = FakePageAdapter(title=NEW_TITLE)
     action_store, _, _, execute, _ = make_world(adapter)
     action_store.create(approve(make_pending(), actor="principal-1"))
 
     execute({"action_id": "action:run-1"})
 
-    assert adapter.writes == []
+    assert adapter.writes == [(NEW_TITLE, "action:action:run-1")]
     stored = action_store.get("action:run-1")
     assert stored.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE
     assert stored.applied.previous_value == OLD_TITLE
@@ -280,16 +282,67 @@ def test_a_write_the_page_does_not_show_is_a_failure():
     assert stored.error
 
 
-def test_an_adapter_failure_is_recorded_not_hidden():
+def test_an_unreachable_site_is_recorded_and_retried():
     adapter = FakePageAdapter(fail_writes=True)
     action_store, _, _, execute, _ = make_world(adapter)
     action_store.create(approve(make_pending(), actor="principal-1"))
 
+    # The job fails so the scheduler retries it; the customer sees why.
+    with pytest.raises(RuntimeError):
+        execute({"action_id": "action:run-1"})
+    stored = action_store.get("action:run-1")
+    assert stored.status == ActionStatus.EXECUTING
+    assert "site is down" in stored.error
+
+    adapter.fail_writes = False
+    execute({"action_id": "action:run-1"})
+    stored = action_store.get("action:run-1")
+    assert stored.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE
+    assert stored.error is None
+
+
+def test_a_timeout_after_the_site_accepted_the_write_is_not_lost():
+    class AcceptsThenTimesOut(FakePageAdapter):
+        def update_title(self, **kwargs):
+            result = super().update_title(**kwargs)
+            if len(self.writes) == 1:
+                raise TimeoutError("no answer")
+            return result
+
+    adapter = AcceptsThenTimesOut()
+    action_store, _, _, execute, rollback = make_world(adapter)
+    action_store.create(approve(make_pending(), actor="principal-1"))
+
+    with pytest.raises(TimeoutError):
+        execute({"action_id": "action:run-1"})
     execute({"action_id": "action:run-1"})
 
     stored = action_store.get("action:run-1")
-    assert stored.status == ActionStatus.FAILED
-    assert "site is down" in stored.error
+    assert stored.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE
+    assert stored.applied.previous_value == OLD_TITLE
+    rollback({"action_id": "action:run-1"})
+    assert adapter.title == OLD_TITLE
+
+
+def test_a_rejection_cannot_land_once_execution_has_claimed_the_action():
+    action_store, *_ = make_world()
+    approved = action_store.create(approve(make_pending(), actor="principal-1"))
+    from app.action.executor import _move
+
+    action_store.update(_move(approved, ActionStatus.EXECUTING, "execution_started"))
+    with pytest.raises(ApprovalError):
+        reject(action_store.get("action:run-1"), actor="principal-1")
+
+
+def test_a_write_built_from_a_stale_copy_is_refused():
+    from app.action.store import ActionChangedError
+
+    action_store, *_ = make_world()
+    pending = action_store.create(make_pending())
+    action_store.update(reject(pending, actor="principal-1"))  # someone else's decision
+    with pytest.raises(ActionChangedError):
+        action_store.update(approve(pending, actor="principal-1"))  # built from before it
+    assert action_store.get("action:run-1").status == ActionStatus.REJECTED
 
 
 def test_rollback_restores_the_previous_title():

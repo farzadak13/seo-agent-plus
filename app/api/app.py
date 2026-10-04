@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from contextlib import nullcontext
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from app.api.auth import APIKeyAuthenticator
 from app.action.approval import ApprovalError, approve, check_rollback, reject
 from app.action.executor import EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE
-from app.action.store import ManagedActionStore
+from app.action.store import ActionChangedError, ManagedActionStore
 from app.api.schemas import (
     ActionDecisionRequest,
     ActionListResponse,
@@ -40,10 +41,16 @@ from app.models.sites import (
     SiteAdapterConnection,
 )
 from app.onboarding.site_store import SiteStore
-from app.persistence.contracts import InvalidCursorError, PersistenceNotFoundError
+from app.persistence.contracts import (
+    InvalidCursorError,
+    PersistenceConflictError,
+    PersistenceNotFoundError,
+)
 from app.runs.handler import SEO_RUN_JOB_TYPE
 from app.runs.store import RunStore
 
+
+SITE_SECRET_ENV_PREFIX = "SEO_AGENT_SITE_SECRET_"
 
 RESERVED_JOB_TYPES = frozenset(
     {SEO_RUN_JOB_TYPE, EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE}
@@ -290,6 +297,22 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> SiteResponse:
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
+        # A reference names an environment variable on this server. Any name
+        # would let a customer have, say, the vault key or the database DSN
+        # sent to their site as a "password"; only variables set aside for
+        # site credentials can be referenced.
+        foreign = sorted(
+            value for value in request.secret_refs.values()
+            if not value.startswith(SITE_SECRET_ENV_PREFIX)
+        )
+        if foreign:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Environment references must start with {SITE_SECRET_ENV_PREFIX}; "
+                    "or send the credential itself in 'secrets'."
+                ),
+            )
         overlap = set(request.secrets) & set(request.secret_refs)
         if overlap:
             raise HTTPException(
@@ -307,6 +330,8 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         }
         with dependencies.transaction_factory():
             for name, value in request.secrets.items():
+                if not re.fullmatch(r"[a-z_]{1,50}", name):
+                    raise HTTPException(status_code=422, detail="Credential names are lower-case field names.")
                 if not value.strip():
                     raise HTTPException(status_code=422, detail=f"{name} must not be empty.")
                 refs[name] = dependencies.vault.put(
@@ -341,6 +366,30 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             raise HTTPException(status_code=409, detail="Site adapter is not ready.") from exc
         return {"site_id": site_id, "adapter_id": adapter.adapter_id,
                 "capabilities": sorted(cap.value for cap in adapter.capabilities)}
+
+    @app.post("/v1/sites/{site_id}/connections/site-adapter/check")
+    def check_site_adapter(site_id: str, authenticated_principal_id: str = Depends(principal_id)):
+        """Talk to the site once, so a wrong password shows up now, not at the first approval."""
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, authenticated_principal_id)
+        if dependencies.adapter_factory is None:
+            raise HTTPException(status_code=503, detail="Adapter factory is not configured.")
+        try:
+            adapter = dependencies.adapter_factory.build(site)
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="Site adapter is not ready.") from exc
+        status_call = getattr(adapter, "status", None)
+        if status_call is None:
+            return {"site_id": site_id, "adapter_id": adapter.adapter_id, "ok": True,
+                    "detail": "This adapter has no connection check."}
+        try:
+            detail = status_call()
+        except Exception as exc:
+            # The adapter's message names the cause (plugin missing, password
+            # rejected) and never contains the credential itself.
+            return {"site_id": site_id, "adapter_id": adapter.adapter_id, "ok": False,
+                    "detail": str(exc)}
+        return {"site_id": site_id, "adapter_id": adapter.adapter_id, "ok": True, "detail": detail}
 
     @app.post(
         "/v1/sites/{site_id}/runs",
@@ -482,7 +531,13 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             rejected = reject(managed, actor=authenticated_principal_id, reason=request.reason)
         except ApprovalError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        _require_action_store(dependencies).update(rejected)
+        try:
+            _require_action_store(dependencies).update(rejected)
+        except ActionChangedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The action changed while this request was being handled; reload and try again.",
+            ) from exc
         return ActionResponse.from_managed(rejected)
 
     @app.post(
@@ -552,9 +607,7 @@ def _save_with_job(dependencies: APIDependencies, managed, job: Job) -> None:
         with dependencies.transaction_factory():
             _require_action_store(dependencies).update(managed)
             dependencies.scheduler.store.create(job)
-    except HTTPException:
-        raise
-    except Exception as exc:
+    except PersistenceConflictError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="The action changed while this request was being handled; reload and try again.",

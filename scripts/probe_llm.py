@@ -62,6 +62,8 @@ def main() -> int:
         )
     except ArvanTransportError as exc:
         print(f"FAILED ({exc.failure_type.value}): {exc}")
+        if exc.detail:
+            print(f"Arvan said: {exc.detail}")
         return 1
     print(f"ok in {time.monotonic() - started:.1f}s: {reply.strip()[:80]!r}")
     print(f"usage: {transport.last_usage}")

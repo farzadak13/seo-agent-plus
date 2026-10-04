@@ -151,7 +151,9 @@ class HoshyarSEO_Title_Store {
 	 * @return string
 	 */
 	private function clean( $title ) {
-		$title = sanitize_text_field( (string) $title );
+		// Not sanitize_text_field(): it also removes %XX sequences, so a title
+		// such as "20%Ab" would be stored altered and never verify.
+		$title = wp_strip_all_tags( wp_check_invalid_utf8( (string) $title ), true );
 		return trim( preg_replace( '/\s+/u', ' ', $title ) );
 	}
 }

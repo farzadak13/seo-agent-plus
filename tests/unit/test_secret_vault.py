@@ -166,6 +166,32 @@ def test_values_are_refused_when_the_server_has_no_key():
 
 def test_the_same_credential_cannot_be_both_a_value_and_a_reference():
     client, *_ = make_client()
-    body = {**WORDPRESS, "secret_refs": {"username": "WP_USER"}}
+    body = {**WORDPRESS, "secret_refs": {"username": "SEO_AGENT_SITE_SECRET_WP_USER"}}
     response = client.put("/v1/sites/s1/connections/site-adapter", headers=HEADERS, json=body)
     assert response.status_code == 422
+
+
+def test_a_reference_to_an_arbitrary_server_variable_is_refused():
+    client, *_ = make_client()
+    body = {
+        "adapter_type": "wordpress",
+        "config": {},
+        "secret_refs": {"username": "SEO_AGENT_SITE_SECRET_U", "application_password": "SEO_AGENT_SECRET_KEYS"},
+    }
+    response = client.put("/v1/sites/s1/connections/site-adapter", headers=HEADERS, json=body)
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("base_url", ["https://attacker.example/", "https://shop.example.attacker.io/"])
+def test_credentials_cannot_be_pointed_at_another_host(base_url):
+    client, *_ = make_client()
+    body = {**WORDPRESS, "config": {"base_url": base_url}}
+    response = client.put("/v1/sites/s1/connections/site-adapter", headers=HEADERS, json=body)
+    assert response.status_code == 422
+
+
+def test_an_api_host_on_the_sites_own_domain_is_allowed():
+    client, *_ = make_client()
+    body = {**WORDPRESS, "config": {"base_url": "https://api.shop.example/"}}
+    response = client.put("/v1/sites/s1/connections/site-adapter", headers=HEADERS, json=body)
+    assert response.status_code == 200, response.text

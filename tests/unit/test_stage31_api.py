@@ -103,7 +103,7 @@ def test_configure_site_adapter():
         json={
             "adapter_type": "wordpress",
             "config": {"username": "seo-agent"},
-            "secret_refs": {"application_password": "WP_PASSWORD"},
+            "secret_refs": {"application_password": "SEO_AGENT_SITE_SECRET_WP_PASSWORD"},
         },
     )
     assert response.status_code == 200

@@ -56,8 +56,8 @@ AUTH = {"Authorization": f"Bearer {API_KEY}"}
 
 @pytest.fixture(autouse=True)
 def clean_database(monkeypatch):
-    monkeypatch.setenv("TEST_WP_USER", "editor")
-    monkeypatch.setenv("TEST_WP_PASSWORD", "xxxx xxxx xxxx xxxx")
+    monkeypatch.setenv("SEO_AGENT_SITE_SECRET_TEST_USER", "editor")
+    monkeypatch.setenv("SEO_AGENT_SITE_SECRET_TEST_PASSWORD", "xxxx xxxx xxxx xxxx")
     with psycopg.connect(DSN, autocommit=True) as connection:
         with connection.cursor() as cursor:
             cursor.execute("DROP TABLE IF EXISTS persistence_records, schema_migrations")
@@ -106,8 +106,8 @@ def onboard(client, runtime):
             "adapter_type": "wordpress",
             "config": {},
             "secret_refs": {
-                "username": "TEST_WP_USER",
-                "application_password": "TEST_WP_PASSWORD",
+                "username": "SEO_AGENT_SITE_SECRET_TEST_USER",
+                "application_password": "SEO_AGENT_SITE_SECRET_TEST_PASSWORD",
             },
         },
         headers=AUTH,

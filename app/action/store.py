@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from app.models.managed_action import ManagedAction
 from app.models.persistence import PersistenceRecord
-from app.persistence.contracts import PersistenceNotFoundError, RecordPage, Repository
+from app.persistence.contracts import (
+    PersistenceConflictError,
+    PersistenceNotFoundError,
+    RecordPage,
+    Repository,
+)
+
+
+class ActionChangedError(PersistenceConflictError):
+    """The action was changed by someone else since it was read."""
 
 
 ACTION_AGGREGATE_TYPE = "managed_action"
@@ -37,6 +46,13 @@ class ManagedActionStore:
         )
         if current is None:
             raise PersistenceNotFoundError(f"action not found: {managed.action_id}")
+        # History is append-only, so it doubles as the version the caller
+        # read: a write that does not extend the stored history was built from
+        # a stale copy and would silently undo someone else's decision (a
+        # rejection landing while an execution was starting, for example).
+        stored = ManagedAction.model_validate(current.payload).history
+        if managed.history[: len(stored)] != stored:
+            raise ActionChangedError(f"action changed since it was read: {managed.action_id}")
         self._repository.replace(
             self._to_record(managed, version=current.version + 1),
             expected_version=current.version,
