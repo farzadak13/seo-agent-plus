@@ -37,13 +37,13 @@ schema ممنوع کرده بود.
 | ۳۴ اتصال واقعی GSC | ✅ تأییدشده | روی production با service account واقعی به گوگل وصل شد |
 | ۳۵ صحت تصمیم‌گیری | ✅ تأییدشده | روی دادهٔ واقعی pama.shop اجرا شد؛ گیت‌های کیفیت پاس شدند |
 | ۳۶ پیشنهاد عنوان | ⚠️ نیمه | wiring کامل شد؛ SERP provider واقعی ندارد، LLM زنده آزمایش نشده |
-| ۳۷ تأیید اقدام | ⛔ شروع نشده | |
-| ۳۸ اجرای واقعی روی سایت | ⚠️ کدنویسی‌شده | adapter ها contract test دارند، روی سایت واقعی اجرا نشده‌اند |
+| ۳۷ تأیید اقدام | ⚠️ کدنویسی‌شده | API تأیید/ویرایش/رد/بازگردانی؛ تست روی PostgreSQL در CI |
+| ۳۸ اجرای واقعی روی سایت | ⚠️ کدنویسی‌شده | job اجرا و بازگردانی وصل شد؛ افزونهٔ HoshyarSEO Connector نوشته شد؛ روی وردپرس واقعی اجرا نشده |
 | ۳۹ سنجش و یادگیری | ⚠️ موتور دارد، وصل نیست | `measurement`, `outcome`, `learning` در runtime ساخته نمی‌شوند |
 | ۴۰ پایداری Job و Run | ⚠️ ناقص | single-worker + advisory lock هست؛ lease و heartbeat هر job نیست |
 | ۴۱ Observability عملیاتی | ⛔ شروع نشده | |
 | ۴۲ رابط کاربری | ⛔ شروع نشده | |
-| ۴۳ استقرار و پذیرش | ⚠️ نیمه | سرور، TLS، systemd، انتشار با rollback هست؛ CI و backup و monitoring نیست |
+| ۴۳ استقرار و پذیرش | ⚠️ نیمه | CI، backup شبانه با تست بازیابی، و watchdog نوشته شد؛ روی سرور نصب نشده‌اند |
 
 زیرساخت تست فعلی: **۸۶۸ تست unit** و **۲۵ تست integration** روی PostgreSQL
 واقعی، به‌علاوهٔ یک migration runner با ثبت و checksum.
@@ -63,7 +63,7 @@ schema ممنوع کرده بود.
 | PostgreSQL محلی با docker compose، دو دیتابیس جدا | ✅ انجام شد |
 | تثبیت وابستگی‌ها در pyproject | ✅ انجام شد |
 | **هویت واقعی tenant** — مدل Tenant، کلید API هر مشتری، اعمال مالکیت | ✅ انجام شد |
-| **ذخیرهٔ رمزنگاری‌شدهٔ اعتبارنامه در دیتابیس** — الان افزودن سایت یعنی تغییر env و restart | ⛔ مانده |
+| **ذخیرهٔ رمزنگاری‌شدهٔ اعتبارنامه در دیتابیس** — AES-GCM، کلید در `SEO_AGENT_SECRET_KEYS` | ✅ انجام شد |
 | **connection pool** — هر request یک اتصال تازه می‌سازد | ⛔ مانده |
 | **لایهٔ transport گوگل** — بدنهٔ خطا حفظ می‌شود؛ ۴۰۱ و ۴۰۳-دسترسی و ۴۰۳-سهمیه از هم جدا شدند | ✅ انجام شد |
 | **OAuth refresh یا service account** — هر سه نوع پشت یک contract؛ service_account زنده آزمایش شد | ✅ انجام شد |
@@ -268,3 +268,39 @@ HTML یعنی لبهٔ شبکهٔ گوگل قبل از رسیدن به API رد�
 * در پاورشل او گاهی حروف بزرگ لاتین تایپ نمی‌شوند. دستورها را با حروف کوچک بده.
 * عبارت جستجوی فارسی را از فایل بده نه از خط فرمان (`@/path`). عبارت
   مثله‌شده خطا نمی‌دهد، نتیجهٔ خالی می‌دهد.
+
+---
+
+## به‌روزرسانی ۱۲ مهر ۱۴۰۵ (۴ اکتبر ۲۰۲۶)
+
+**۱۰۴۸ تست unit سبز.** کارهای این جلسه:
+
+| کار | جای کد |
+| --- | --- |
+| Stage 37 — پیشنهاد عنوان منتظر تأیید می‌ماند؛ تأیید (با امکان ویرایش)، رد، بازگردانی | `app/action/approval.py`، `/v1/actions/*` |
+| Stage 38 — اجرا با job: قبل از نوشتن صفحه را می‌خواند، بعدش تأیید می‌کند، تکرار امن است | `app/action/executor.py` |
+| افزونهٔ وردپرس — عنوان `<title>` را عوض می‌کند نه H1؛ با Yoast، Rank Math، AIOSEO، SEOPress | `integrations/wordpress/hoshyarseo-connector` |
+| adapter تازهٔ `hoshyarseo` — عنوان را از صفحهٔ عمومی می‌خواند | `app/site_adapters/hoshyarseo.py` |
+| اعتبارنامهٔ رمزنگاری‌شده — مشتری رمز وردپرس را از API می‌دهد، بدون دسترسی به سرور | `app/onboarding/vault.py` |
+| بررسی زندهٔ مدل آروان | `deploy/check-llm.sh` |
+| backup شبانه + تست بازیابی، watchdog | `deploy/backup-setup.sh`، `deploy/watchdog-setup.sh` |
+| CI روی Python 3.12 و 3.14 با PostgreSQL واقعی، و بررسی PHP افزونه | `.github/workflows/ci.yml` |
+| اسکریپت‌های deploy با CRLF ساخته می‌شدند | `.gitattributes` |
+
+### روی سرور، به ترتیب
+
+    sudo bash backup-setup.sh && sudo seoagent-restore-test
+    sudo bash watchdog-setup.sh
+    sudo bash secret-key.sh
+    # بعد از گذاشتن تنظیمات آروان در /etc/seoagent/env:
+    sudo bash check-llm.sh
+
+### مانده تا فروش
+
+۱. **منبع SERP** — هنوز باز، و تنها مسدودکنندهٔ مسیر عنوان.
+۲. **اجرای کامل روی یک وردپرس واقعی** با افزونه.
+۳. **Stage 39** — وصل کردن سنجش و یادگیری؛ الان اقدام در `measurement_window_active` می‌ماند.
+۴. **`admin`** هنوز محدود نشده.
+۵. **connection pool**، **observability ماندگار**، **Stage 40**.
+۶. **رابط کاربری** — یک صفحهٔ ساده برای دیدن و تأیید پیشنهادها کافی است برای شروع.
+۷. **تأیید OAuth گوگل**.
