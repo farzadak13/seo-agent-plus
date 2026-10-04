@@ -221,6 +221,9 @@ def test_read_page_uses_wordpress_posts_endpoint():
         in call["url"]
     )
     assert "slug=test-page" in call["url"]
+    # The raw title, not the HTML-escaped rendering, or nothing we write
+    # ever reads back equal to itself.
+    assert "context=edit" in call["url"]
 
 
 def test_application_password_basic_auth_is_correct():

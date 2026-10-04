@@ -497,9 +497,13 @@ class WordPressSiteAdapter(SiteAdapter):
 
         slug = path.rstrip("/").split("/")[-1]
 
+        # context=edit returns the raw title as stored. Without it WordPress
+        # sends only the rendered form, with "|" and "–" turned into HTML
+        # entities, and a title we wrote never reads back equal to itself.
         endpoint = (
             f"{self._config.content_type.value}"
             f"?slug={quote(slug, safe='')}"
+            f"&context=edit"
         )
 
         response = self._request(
