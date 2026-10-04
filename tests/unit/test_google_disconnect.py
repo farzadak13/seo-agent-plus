@@ -156,3 +156,35 @@ def test_a_retry_finishes_detaching_sites_after_a_failure_part_way():
     assert second.status_code == 200, second.text
     assert second.json() == {"connected": False, "revoked": False, "sites_detached": ["s1"]}
     assert sites.get("s1").gsc is None
+
+
+def test_a_reconnection_racing_a_disconnect_keeps_its_sites():
+    client, sites, _ = api_client()
+    connect_google(client)
+    client.put(
+        "/v1/sites/s1/connections/gsc",
+        headers=AUTH,
+        json={"property_url": "sc-domain:tennisino.com", "use_google_account": True},
+    )
+    oauth = client.app.state.dependencies.google_oauth
+    oauth._revoke = lambda token: 200
+    oauth.disconnect("p1")  # an earlier DELETE got this far, then failed
+    connect_google(client)  # the customer signs in again meanwhile
+
+    response = client.delete("/v1/google/connection", headers=AUTH)
+    assert response.status_code == 200
+    # This call revoked the new grant itself, so now nothing is live: detached.
+    assert sites.get("s1").gsc is None
+
+    # The race proper: the new grant lands between this call's revoke and its
+    # detach loop. Simulated by a disconnect that leaves a live connection.
+    connect_google(client)
+    client.put(
+        "/v1/sites/s1/connections/gsc",
+        headers=AUTH,
+        json={"property_url": "sc-domain:tennisino.com", "use_google_account": True},
+    )
+    oauth.disconnect = lambda tenant_id: False
+    response = client.delete("/v1/google/connection", headers=AUTH)
+    assert response.json()["sites_detached"] == []
+    assert sites.get("s1").gsc is not None, "the newly connected site keeps its grant"

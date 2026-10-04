@@ -579,8 +579,15 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             # says plainly that Search Console needs connecting again. This
             # runs on every call, not only when a grant was just removed, so
             # a retry after a failure part-way through finishes the job.
+            #
+            # The grant's reference is the same for every connection a tenant
+            # makes, so a sign-in completing alongside this call would put a
+            # live grant behind it. Detach only while no connection is live,
+            # checked again before each site.
             grant = tenant_credential_ref(authenticated_principal_id)
             for site in dependencies.site_store.list_for_tenant(authenticated_principal_id):
+                if oauth.connection(authenticated_principal_id) is not None:
+                    break
                 if site.gsc is not None and site.gsc.credential_ref == grant:
                     dependencies.site_store.update(site.model_copy(update={"gsc": None}))
                     detached.append(site.site_id)
