@@ -112,6 +112,9 @@ class ArvanTransport:
                 raw_body = response.read()
 
         except error.HTTPError as exc:
+            # The status alone does not say whether the key, the model name or
+            # the quota is wrong; the body does. Keep a bounded piece of it.
+            detail = _error_detail(exc)
             if exc.code == 401:
                 raise ArvanTransportError(
                     failure_type=(
@@ -119,6 +122,7 @@ class ArvanTransport:
                     ),
                     message=(
                         "Arvan AIaaS authentication failed."
+                        f"{detail}"
                     ),
                     retryable=False,
                 ) from exc
@@ -130,6 +134,7 @@ class ArvanTransport:
                     ),
                     message=(
                         "Arvan AIaaS rate limit exceeded."
+                        f"{detail}"
                     ),
                     retryable=True,
                 ) from exc
@@ -140,7 +145,7 @@ class ArvanTransport:
                 ),
                 message=(
                     f"Arvan AIaaS HTTP error: "
-                    f"{exc.code}"
+                    f"{exc.code}{detail}"
                 ),
                 retryable=exc.code >= 500,
             ) from exc
@@ -162,7 +167,8 @@ class ArvanTransport:
                     LLMFailureType.TRANSPORT
                 ),
                 message=(
-                    "Arvan AIaaS network request failed."
+                    "Arvan AIaaS network request failed: "
+                    f"{exc.reason}"
                 ),
                 retryable=True,
             ) from exc
@@ -326,3 +332,13 @@ class ArvanTransport:
             )
 
         return content
+
+
+def _error_detail(exc: error.HTTPError) -> str:
+    try:
+        body = exc.read().decode("utf-8", errors="replace").strip()
+    except Exception:
+        return ""
+    if not body:
+        return ""
+    return f" Response: {body[:300]}"
