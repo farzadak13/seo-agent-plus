@@ -74,7 +74,11 @@ class ConfigureSiteAdapterRequest(BaseModel):
 
     adapter_type: str = Field(min_length=1, max_length=100)
     config: dict[str, Any] = Field(default_factory=dict)
+    # Names of environment variables holding a credential (operator setup).
     secret_refs: dict[str, str] = Field(default_factory=dict)
+    # Credential values themselves, stored encrypted and never returned.
+    # This is how a customer connects their own site without server access.
+    secrets: dict[str, str] = Field(default_factory=dict, repr=False)
 
 
 class SiteResponse(BaseModel):

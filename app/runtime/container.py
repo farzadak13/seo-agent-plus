@@ -14,6 +14,7 @@ from app.api.auth import TenantAPIKeyAuthenticator
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.observability import InMemoryEventSink, InMemoryMetricsSink, ObservabilityContext
 from app.onboarding.secrets import EnvironmentSecretResolver
+from app.onboarding.vault import CompositeSecretResolver, Keyring, SecretVault
 from app.onboarding.site_store import SiteStore
 from app.persistence.postgres import PostgresRepository
 from app.runs.development import EmptyBaselineProvider, StubGSCGateway
@@ -47,6 +48,7 @@ class RuntimeContainer:
     worker: WorkerHandle
     adapters: SiteAdapterFactory
     action_store: ManagedActionStore
+    vault: SecretVault | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
 
@@ -67,7 +69,9 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     api_key_store = APIKeyStore(repository)
     action_store = ManagedActionStore(repository)
 
-    secret_resolver = EnvironmentSecretResolver()
+    keyring = Keyring.from_environment()
+    vault = SecretVault(repository, keyring) if keyring is not None else None
+    secret_resolver = CompositeSecretResolver(EnvironmentSecretResolver(), vault)
 
     observability = ObservabilityContext(
         event_sink=InMemoryEventSink(),
@@ -163,6 +167,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         worker=worker,
         adapters=adapters,
         action_store=action_store,
+        vault=vault,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
     )
@@ -200,6 +205,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             adapter_factory=container.adapters,
             gsc_property_lister=container.gsc_property_lister,
             action_store=container.action_store,
+            vault=container.vault,
         )
     )
     app.router.lifespan_context = lifespan

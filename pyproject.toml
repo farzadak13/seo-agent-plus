@@ -17,6 +17,9 @@ dependencies = [
     # and expiry semantics are where a home-grown signer is quietly wrong.
     "google-auth>=2.30,<3",
     "requests>=2.32,<3",
+    # AES-GCM for customers' site credentials. Already pulled in by
+    # google-auth; named here because the vault depends on it directly.
+    "cryptography>=42",
 ]
 
 [dependency-groups]

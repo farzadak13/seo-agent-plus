@@ -65,8 +65,12 @@ class APIDependencies:
         adapter_factory=None,
         gsc_property_lister=None,
         action_store: ManagedActionStore | None = None,
+        vault=None,
     ) -> None:
         self.action_store = action_store
+        # None: no SEO_AGENT_SECRET_KEYS, so credentials can only be referenced
+        # from the environment, as before.
+        self.vault = vault
         self.transaction_factory = transaction_factory or nullcontext
         self.adapter_factory = adapter_factory
         # None means we cannot ask Google which properties exist (stub mode).
@@ -286,25 +290,44 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> SiteResponse:
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
+        overlap = set(request.secrets) & set(request.secret_refs)
+        if overlap:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Give each credential once, as a value or a reference: {sorted(overlap)}",
+            )
+        if request.secrets and dependencies.vault is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Credential storage is not configured on this server.",
+            )
         refs = {
             key: SecretRef(provider=SecretProvider.ENVIRONMENT, key=value)
             for key, value in request.secret_refs.items()
         }
-        updated = site.model_copy(
-            update={
-                "site_adapter": SiteAdapterConnection(
-                    adapter_type=request.adapter_type,
-                    config=dict(request.config),
-                    secret_refs=refs,
+        with dependencies.transaction_factory():
+            for name, value in request.secrets.items():
+                if not value.strip():
+                    raise HTTPException(status_code=422, detail=f"{name} must not be empty.")
+                refs[name] = dependencies.vault.put(
+                    tenant_id=site.principal_id, site_id=site.site_id, name=name, value=value
                 )
-            }
-        )
-        if dependencies.adapter_factory is not None:
-            try:
-                dependencies.adapter_factory.build(updated)
-            except Exception as exc:
-                raise HTTPException(status_code=422, detail="Invalid adapter configuration or missing credential reference.") from exc
-        return SiteResponse.from_site(_require_site_store(dependencies).update(updated))
+            updated = site.model_copy(
+                update={
+                    "site_adapter": SiteAdapterConnection(
+                        adapter_type=request.adapter_type,
+                        config=dict(request.config),
+                        secret_refs=refs,
+                    )
+                }
+            )
+            if dependencies.adapter_factory is not None:
+                try:
+                    dependencies.adapter_factory.build(updated)
+                except Exception as exc:
+                    raise HTTPException(status_code=422, detail="Invalid adapter configuration or missing credential reference.") from exc
+            saved = _require_site_store(dependencies).update(updated)
+        return SiteResponse.from_site(saved)
 
     @app.get("/v1/sites/{site_id}/capabilities")
     def site_capabilities(site_id: str, authenticated_principal_id: str = Depends(principal_id)):

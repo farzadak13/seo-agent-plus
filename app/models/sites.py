@@ -15,6 +15,9 @@ class SiteStatus(StrEnum):
 
 class SecretProvider(StrEnum):
     ENVIRONMENT = "environment"
+    # Encrypted in the database, one value per site and field. The reference
+    # key is "<site_id>/<field>"; the value never appears in the site record.
+    DATABASE = "database"
 
 
 class SecretRef(BaseModel):
