@@ -174,3 +174,15 @@ def test_a_device_filter_still_counts_every_synced_day():
     week = reports().performance(site_id="s1", property_url=PROPERTY, start=D1, end=D3,
                                  interval="week", device=Device.DESKTOP).series
     assert week[0].days_covered == 3
+
+
+
+def test_the_comparison_says_how_much_of_the_previous_period_is_there():
+    # D2..D3 compared with D0..D1: only D1 is synced.
+    report = reports().pages(site_id="s1", property_url=PROPERTY, start=D2, end=D3, compare=True)
+    assert (report.previous_days_covered, report.previous_days_in_range) == (1, 2)
+
+
+def test_without_comparison_there_is_no_coverage_to_report():
+    report = reports().pages(site_id="s1", property_url=PROPERTY, start=D2, end=D3)
+    assert report.previous_days_covered is None and report.previous_days_in_range is None

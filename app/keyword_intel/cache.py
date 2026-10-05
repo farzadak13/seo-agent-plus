@@ -21,6 +21,7 @@ exact and needs no time-zone database on the server.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 from app.keyword_intel.contracts import (
@@ -54,6 +55,15 @@ class _Store:
     def __init__(self, repository: Repository, aggregate_type: str) -> None:
         self._repository = repository
         self._aggregate_type = aggregate_type
+
+    def one_connection(self):
+        """Group many reads onto one database connection, where the store has them.
+
+        Outside a transaction the PostgreSQL repository opens a connection per
+        read; a table of 500 keywords would open 500, one after another.
+        """
+        transaction = getattr(self._repository, "transaction", None)
+        return transaction() if callable(transaction) else nullcontext()
 
     def read(self, key: str) -> tuple[dict, int] | None:
         record = self._repository.get(aggregate_type=self._aggregate_type, aggregate_id=key)
@@ -181,13 +191,14 @@ class CachedSearchVolume:
         table): a keyword not yet asked about is simply absent.
         """
         found: dict[str, KeywordVolume] = {}
-        for keyword in keywords:
-            normalized = normalize_query(keyword)
-            if not normalized or normalized in found:
-                continue
-            cached = self._store.read(self._key(normalized))
-            if cached is not None:
-                found[normalized] = KeywordVolume.model_validate(cached[0])
+        with self._store.one_connection():
+            for keyword in keywords:
+                normalized = normalize_query(keyword)
+                if not normalized or normalized in found:
+                    continue
+                cached = self._store.read(self._key(normalized))
+                if cached is not None:
+                    found[normalized] = KeywordVolume.model_validate(cached[0])
         return found
 
     def lookup(self, keywords: Sequence[str]) -> VolumeLookup:

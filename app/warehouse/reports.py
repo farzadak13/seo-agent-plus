@@ -199,8 +199,18 @@ class WarehouseReports:
             fetched = fetched[:limit]
 
             previous: dict[int, MetricValues] = {}
-            if compare and fetched:
+            previous_days_covered = None
+            if compare:
                 prev_start, prev_end = previous_range(start, end)
+                cursor.execute(
+                    "SELECT count(*) FROM gsc_sync_days"
+                    " WHERE site_id = %(site)s AND property_url = %(property)s AND status = 'synced'"
+                    " AND day BETWEEN %(prev_start)s AND %(prev_end)s",
+                    {"site": site_id, "property": property_url,
+                     "prev_start": prev_start, "prev_end": prev_end},
+                )
+                previous_days_covered = cursor.fetchone()[0]
+            if compare and fetched:
                 cursor.execute(
                     f"""
                     SELECT {key}, sum(d.clicks), sum(d.impressions), sum(d.position_sum)
@@ -226,4 +236,6 @@ class WarehouseReports:
             site_id=site_id, start=start, end=end, device=device, sort=sort, order=order,
             rows=rows, next_offset=offset + limit if more else None,
             compared_with=previous_range(start, end) if compare else None,
+            previous_days_covered=previous_days_covered,
+            previous_days_in_range=(end - start).days + 1 if compare else None,
         )

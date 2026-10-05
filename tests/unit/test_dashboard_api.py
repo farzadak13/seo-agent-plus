@@ -178,3 +178,70 @@ def test_the_allowed_values_are_published_in_the_api_description():
     ref = sort_schema.get("$ref") or sort_schema.get("allOf", [{}])[0].get("$ref")
     enum = schema["components"]["schemas"][ref.rsplit("/", 1)[-1]]["enum"]
     assert set(enum) == {"clicks", "impressions", "ctr", "position"}
+
+
+
+def test_a_failing_keyword_cache_leaves_the_table_without_volumes():
+    class BrokenKeywords:
+        def cached_volumes(self, keywords):
+            raise RuntimeError("database briefly away")
+
+    api, _ = client(keywords=BrokenKeywords())
+    response = api.get("/v1/sites/s1/performance/queries")
+    assert response.status_code == 200
+    assert [row["search_volume"] for row in response.json()["rows"]] == [None, None]
+
+
+def test_cached_volumes_reads_the_cache_and_spends_nothing():
+    from app.keyword_intel.seosignal import SeoSignalSearchVolume
+    from app.runtime.keywords import KeywordIntel
+    from tests.unit.test_keyword_intel import FakeSeoSignal, client as seosignal_client
+
+    repository = InMemoryRepository()
+    fake = FakeSeoSignal()
+    intel = KeywordIntel(
+        volumes=SeoSignalSearchVolume(seosignal_client(fake), clock=lambda: NOW),
+        repository=repository, daily_budget=40, tenant_daily_budget=10, clock=lambda: NOW,
+    )
+    intel.volumes_for("p1").lookup(["کفش مردانه"])
+    calls = len(fake.calls)
+
+    found = intel.cached_volumes(["كفش مردانه", "کفش ورزشی"])  # Arabic kaf in the first
+
+    assert {k: v.search_volume for k, v in found.items()} == {"کفش مردانه": 12000}
+    assert len(fake.calls) == calls
+
+
+def test_a_peek_reads_on_one_connection():
+    from contextlib import contextmanager
+
+    from app.keyword_intel.cache import CachedSearchVolume, RequestBudget
+    from app.keyword_intel.seosignal import SeoSignalSearchVolume
+    from tests.unit.test_keyword_intel import FakeSeoSignal, client as seosignal_client
+
+    class CountingRepository(InMemoryRepository):
+        transactions = 0
+        reads_outside = 0
+        inside = False
+
+        @contextmanager
+        def transaction(self):
+            CountingRepository.transactions += 1
+            CountingRepository.inside = True
+            try:
+                yield
+            finally:
+                CountingRepository.inside = False
+
+        def get(self, **kwargs):
+            if not CountingRepository.inside:
+                CountingRepository.reads_outside += 1
+            return super().get(**kwargs)
+
+    repository = CountingRepository()
+    service = CachedSearchVolume(
+        SeoSignalSearchVolume(seosignal_client(FakeSeoSignal()), clock=lambda: NOW), repository,
+        RequestBudget(repository, scope="s", daily_limit=10, clock=lambda: NOW), clock=lambda: NOW,
+    )
+    service.peek([f"کلمه {n}" for n in range(50)])
+    assert CountingRepository.transactions == 1 and CountingRepository.reads_outside == 0

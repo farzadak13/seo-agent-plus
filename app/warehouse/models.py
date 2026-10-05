@@ -210,3 +210,8 @@ class TableReport(BaseModel):
     rows: list[TableRow]
     next_offset: int | None = None
     compared_with: tuple[date, date] | None = None
+    # Synced days in the compared period, out of its length. Fewer means the
+    # backfill has not reached it: a missing "previous" there is not a zero,
+    # and a fall against it is not a fall.
+    previous_days_covered: int | None = Field(default=None, ge=0)
+    previous_days_in_range: int | None = Field(default=None, ge=1)
