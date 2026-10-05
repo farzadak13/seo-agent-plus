@@ -285,3 +285,33 @@ def test_the_warehouse_needs_live_search_console():
 
     with pytest.raises(ValueError, match="GSC_MODE=live"):
         RuntimeConfig(api_key="k", database_dsn="d", warehouse_sync_enabled=True)
+
+
+def test_an_analysis_follows_the_same_rule_as_the_history():
+    # A customer's own Google grant on a property that does not cover the site.
+    from app.runs.store import RunStore
+    from app.api.app import APIDependencies, create_app
+    from app.api.auth import APIKeyAuthenticator
+    from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
+    from app.onboarding.site_store import SiteStore
+    from app.persistence.memory import InMemoryRepository
+
+    repository = InMemoryRepository()
+    sites = SiteStore(repository)
+    foreign = GSCConnectionConfig(
+        property_url="sc-domain:other.ir",
+        credential_ref=SecretRef(provider=SecretProvider.DATABASE, key="tenant:p1/google_refresh_token"),
+        auth_mode="oauth_refresh_token",
+    )
+    sites.create(make_site(gsc=foreign))
+    sites.create(make_site("s2", status="paused"))
+    client = TestClient(create_app(APIDependencies(
+        scheduler=JobScheduler(store=JobStore(repository), handlers=JobHandlerRegistry()),
+        authenticator=APIKeyAuthenticator("k", principal_id="p1"),
+        site_store=sites, run_store=RunStore(repository),
+    )))
+    run = {"start_date": "2026-09-01", "end_date": "2026-09-07", "normalized_url": "https://tennisino.com/x",
+           "normalized_query": "q", "candidate_id": "c"}
+    headers = {"Authorization": "Bearer k"}
+    assert client.post("/v1/sites/s1/runs", json=run, headers=headers).status_code == 409
+    assert client.post("/v1/sites/s2/runs", json=run, headers=headers).status_code == 409

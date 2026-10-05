@@ -76,11 +76,24 @@ def build_warehouse(config, *, site_store, secret_resolver, transport):
 
 
 class WarehouseLoop:
-    """Runs a sync round every interval on a background thread, until stopped."""
+    """Runs a sync round every interval on a background thread, until stopped.
 
-    def __init__(self, runner: WarehouseSyncRunner, *, interval_seconds: float = ROUND_INTERVAL_SECONDS) -> None:
+    ``should_run`` is asked before every round. The container passes "is the
+    job worker still running": the worker's database lease is what makes this
+    the only process syncing, and a worker that has died has released it, so
+    another server may now hold it and be syncing the same sites.
+    """
+
+    def __init__(
+        self,
+        runner: WarehouseSyncRunner,
+        *,
+        interval_seconds: float = ROUND_INTERVAL_SECONDS,
+        should_run=lambda: True,
+    ) -> None:
         self._runner = runner
         self._interval = interval_seconds
+        self._should_run = should_run
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -103,7 +116,10 @@ class WarehouseLoop:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
-                self._runner.run_round()
+                if self._should_run():
+                    self._runner.run_round()
+                else:
+                    log.warning("warehouse: the job worker is not running; skipping this round")
             except Exception:
                 # A round that breaks must not end the loop: the next one may
                 # well succeed (the database back, a token refreshed).

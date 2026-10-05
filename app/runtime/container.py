@@ -128,7 +128,12 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         config, site_store=site_store, secret_resolver=secret_resolver,
         transport=transport,
     )
-    warehouse_loop = WarehouseLoop(warehouse_runner) if warehouse_runner is not None else None
+    # "worker" is bound further down; the lambda reads it only once running.
+    warehouse_loop = (
+        WarehouseLoop(warehouse_runner, should_run=lambda: worker.running)
+        if warehouse_runner is not None
+        else None
+    )
 
     google_oauth = None
     if config.google_sign_in_enabled:

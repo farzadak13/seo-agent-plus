@@ -545,13 +545,16 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             )
         # Checked on every analysis, not only when connecting: a site set up
         # before ownership was required, or one whose property was changed by
-        # other means, must not keep reading through the shared account.
-        if _require_ownership_for_shared_credential(site, site.gsc.credential_ref):
-            if not property_matches_site(site.gsc.property_url, str(site.base_url)):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="The connected property is not this site's own domain.",
-                )
+        # other means, must not keep reading through it. The same rule as the
+        # dashboard's history (site_may_read_search_console); the first call
+        # only gives the unproven case its own, more useful, message.
+        _require_ownership_for_shared_credential(site, site.gsc.credential_ref)
+        if not site_may_read_search_console(site):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This site cannot be analysed: it is paused, or its Search Console "
+                       "property is not its own domain.",
+            )
 
         run_store = _require_run_store(dependencies)
         job = Job(

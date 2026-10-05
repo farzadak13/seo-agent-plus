@@ -186,7 +186,7 @@ class OwnershipVerifier:
 def site_may_read_search_console(site) -> bool:
     """Whether a site's Search Console data may be read for it at all.
 
-    The rule an analysis applies, shared by the warehouse sync and its status:
+    The one rule for analyses, the warehouse sync and its status:
     with the operator's shared account, only a proven site and exactly its own
     property; with the customer's own Google grant, a property that covers the
     site.
