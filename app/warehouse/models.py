@@ -129,3 +129,84 @@ class SyncSummary(BaseModel):
     oldest_synced_day: date | None = None
     capped_days: list[date] = Field(default_factory=list)
     recent_failures: list[SyncFailure] = Field(default_factory=list)
+
+
+# --- what the dashboard reads -------------------------------------------------------
+
+
+class Interval(StrEnum):
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+
+
+class SortKey(StrEnum):
+    CLICKS = "clicks"
+    IMPRESSIONS = "impressions"
+    CTR = "ctr"
+    POSITION = "position"
+
+
+class SortOrder(StrEnum):
+    ASC = "asc"
+    DESC = "desc"
+
+
+class Compare(StrEnum):
+    PREVIOUS = "previous"  # the period of the same length just before
+
+
+class MetricValues(BaseModel):
+    """Clicks and impressions summed; CTR and position recomputed from the sums."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    clicks: int = Field(ge=0)
+    impressions: int = Field(ge=0)
+    ctr: float | None = None       # None where there were no impressions
+    position: float | None = None  # impression-weighted average
+
+
+class SeriesPoint(MetricValues):
+    period_start: date
+    # Synced days inside this period: fewer than its length means a partial
+    # period (the backfill has not reached it, or a day failed).
+    days_covered: int = Field(ge=0)
+
+
+class PerformanceReport(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    site_id: str
+    start: date
+    end: date
+    interval: Interval
+    device: Device | None = None
+    totals: MetricValues
+    days_covered: int = Field(ge=0)
+    days_in_range: int = Field(ge=1)
+    series: list[SeriesPoint]
+
+
+class TableRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    key: str  # the page URL or the query
+    current: MetricValues
+    previous: MetricValues | None = None  # the same metrics for the period before
+    # Monthly searches, from the keyword cache only (queries table); never fetched here.
+    search_volume: int | None = None
+
+
+class TableReport(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    site_id: str
+    start: date
+    end: date
+    device: Device | None = None
+    sort: SortKey
+    order: SortOrder
+    rows: list[TableRow]
+    next_offset: int | None = None
+    compared_with: tuple[date, date] | None = None

@@ -17,6 +17,7 @@ from app.onboarding.secrets import EnvironmentSecretResolver
 from app.onboarding.google_oauth import GoogleOAuthConfig, GoogleOAuthService
 from app.runtime.keywords import KeywordIntel, build_keyword_intel
 from app.runtime.warehouse import WarehouseLoop, build_warehouse
+from app.warehouse.reports import WarehouseReports
 from app.warehouse.store import PostgresWarehouse
 from app.onboarding.ownership import OwnershipVerifier
 from app.onboarding.vault import CompositeSecretResolver, Keyring, SecretVault
@@ -58,6 +59,7 @@ class RuntimeContainer:
     keywords: KeywordIntel | None = None
     warehouse: PostgresWarehouse | None = None
     warehouse_loop: WarehouseLoop | None = None
+    warehouse_reports: WarehouseReports | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
 
@@ -216,6 +218,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         keywords=keywords,
         warehouse=warehouse,
         warehouse_loop=warehouse_loop,
+        warehouse_reports=WarehouseReports(config.database_dsn) if warehouse is not None else None,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
     )
@@ -258,6 +261,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             google_oauth=container.google_oauth,
             keywords=container.keywords,
             warehouse=container.warehouse,
+            warehouse_reports=container.warehouse_reports,
             tenant_name=lambda tenant_id: getattr(
                 container.tenant_store.find(tenant_id), "name", tenant_id
             ),

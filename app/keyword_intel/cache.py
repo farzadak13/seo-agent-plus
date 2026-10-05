@@ -174,6 +174,22 @@ class CachedSearchVolume:
     def _key(self, keyword: str) -> str:
         return f"{self._provider.provider_id}:{keyword}"
 
+    def peek(self, keywords: Sequence[str]) -> dict[str, KeywordVolume]:
+        """Cached answers only, fresh or old; never a request, never the budget.
+
+        For pages that list many keywords at once (the dashboard's queries
+        table): a keyword not yet asked about is simply absent.
+        """
+        found: dict[str, KeywordVolume] = {}
+        for keyword in keywords:
+            normalized = normalize_query(keyword)
+            if not normalized or normalized in found:
+                continue
+            cached = self._store.read(self._key(normalized))
+            if cached is not None:
+                found[normalized] = KeywordVolume.model_validate(cached[0])
+        return found
+
     def lookup(self, keywords: Sequence[str]) -> VolumeLookup:
         wanted: list[str] = []
         for keyword in keywords:

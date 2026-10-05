@@ -45,6 +45,10 @@ class KeywordIntel:
         )
         return CachedSearchVolume(self._volumes, self._repository, budget, clock=self._clock)
 
+    def cached_volumes(self, keywords) -> dict:
+        """{normalised keyword: KeywordVolume} from the cache only; costs no request."""
+        return self.volumes_for_system().peek(keywords)
+
     def volumes_for_system(self) -> CachedSearchVolume:
         """Lookups the service makes itself (enriching a run), on the shared budget."""
         provider = self._volumes.provider_id

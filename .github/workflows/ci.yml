@@ -66,7 +66,8 @@ jobs:
             tests/integration/test_postgres_live.py \
             tests/integration/test_runtime_live.py \
             tests/integration/test_actions_live.py \
-            tests/integration/test_warehouse_live.py | tee integration.log
+            tests/integration/test_warehouse_live.py \
+            tests/integration/test_warehouse_reports_live.py | tee integration.log
           if grep -qi "skipped" integration.log; then
             echo "Live database tests were skipped; the database is not reachable." >&2
             exit 1

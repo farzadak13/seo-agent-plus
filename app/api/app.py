@@ -5,7 +5,7 @@ import re
 from contextlib import nullcontext
 from urllib.parse import parse_qs
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -57,8 +57,19 @@ from app.onboarding.ownership import (
     property_matches_site,
     site_may_read_search_console,
 )
-from app.warehouse.models import SyncState, SyncSummary
-from app.warehouse.planner import summarize, sync_window
+from app.normalization.url import canonicalize_url
+from app.warehouse.models import Device as WarehouseDevice
+from app.warehouse.models import (
+    Compare,
+    Interval,
+    PerformanceReport,
+    SortKey,
+    SortOrder,
+    SyncState,
+    SyncSummary,
+    TableReport,
+)
+from app.warehouse.planner import WINDOW_DAYS, summarize, sync_window
 from app.onboarding.site_store import SiteStore
 from app.persistence.contracts import (
     InvalidCursorError,
@@ -100,8 +111,10 @@ class APIDependencies:
         tenant_name=None,
         keywords=None,
         warehouse=None,
+        warehouse_reports=None,
         clock=None,
     ) -> None:
+        self.warehouse_reports = warehouse_reports
         # None: the Search Console warehouse is switched off on this server.
         self.warehouse = warehouse
         self.clock = clock or (lambda: datetime.now(timezone.utc))
@@ -484,6 +497,86 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             site_id=site_id, property_url=site.gsc.property_url, window=window, entries=entries
         )
 
+    # The dashboard's reads. All from the warehouse, none from Google.
+
+    @app.get("/v1/sites/{site_id}/performance", response_model=PerformanceReport)
+    def site_performance(
+        site_id: str,
+        start: date | None = None,
+        end: date | None = None,
+        interval: Interval = Interval.DAY,
+        device: WarehouseDevice | None = None,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> PerformanceReport:
+        site, reports = _readable_site(dependencies, site_id, authenticated_principal_id)
+        start, end = _report_range(dependencies, start, end)
+        return reports.performance(
+            site_id=site_id, property_url=site.gsc.property_url, start=start, end=end,
+            interval=interval, device=device,
+        )
+
+    @app.get("/v1/sites/{site_id}/performance/pages", response_model=TableReport)
+    def site_pages(
+        site_id: str,
+        start: date | None = None,
+        end: date | None = None,
+        device: WarehouseDevice | None = None,
+        sort: SortKey = SortKey.CLICKS,
+        order: SortOrder = SortOrder.DESC,
+        limit: int = 50,
+        offset: int = 0,
+        compare: Compare | None = None,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> TableReport:
+        site, reports = _readable_site(dependencies, site_id, authenticated_principal_id)
+        start, end = _report_range(dependencies, start, end)
+        return reports.pages(
+            site_id=site_id, property_url=site.gsc.property_url, start=start, end=end,
+            device=device, sort=sort, order=order, limit=limit, offset=offset,
+            compare=compare is Compare.PREVIOUS,
+        )
+
+    @app.get("/v1/sites/{site_id}/performance/queries", response_model=TableReport)
+    def site_queries(
+        site_id: str,
+        start: date | None = None,
+        end: date | None = None,
+        device: WarehouseDevice | None = None,
+        page: str | None = None,
+        sort: SortKey = SortKey.CLICKS,
+        order: SortOrder = SortOrder.DESC,
+        limit: int = 50,
+        offset: int = 0,
+        compare: Compare | None = None,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> TableReport:
+        site, reports = _readable_site(dependencies, site_id, authenticated_principal_id)
+        start, end = _report_range(dependencies, start, end)
+        page_url = None
+        if page is not None:
+            try:
+                page_url = canonicalize_url(page)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="page must be a full http(s) URL.") from exc
+        report = reports.queries(
+            site_id=site_id, property_url=site.gsc.property_url, start=start, end=end,
+            device=device, page_url=page_url, sort=sort, order=order, limit=limit,
+            offset=offset, compare=compare is Compare.PREVIOUS,
+        )
+        if dependencies.keywords is None or not report.rows:
+            return report
+        # Demand beside each query, from the keyword cache only: a table of a
+        # hundred queries must not spend the provider's daily requests.
+        try:
+            volumes = dependencies.keywords.cached_volumes([row.key for row in report.rows])
+        except Exception:
+            log.warning("keyword cache unavailable for the queries table", exc_info=True)
+            return report
+        return report.model_copy(update={"rows": [
+            row.model_copy(update={"search_volume": getattr(volumes.get(row.key), "search_volume", None)})
+            for row in report.rows
+        ]})
+
     @app.get("/v1/sites/{site_id}/capabilities")
     def site_capabilities(site_id: str, authenticated_principal_id: str = Depends(principal_id)):
         site = _get_site(dependencies, site_id)
@@ -834,6 +927,35 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         return ActionResponse.from_managed(requested, job_id=job.job_id)
 
     return app
+
+
+def _readable_site(dependencies: APIDependencies, site_id: str, tenant_id: str):
+    """The site and the reports, if this tenant may read this site's history."""
+    site = _get_site(dependencies, site_id)
+    _ensure_owner(site.principal_id, tenant_id)
+    if dependencies.warehouse_reports is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Search Console history is not enabled on this server.",
+        )
+    if site.gsc is None or not site_may_read_search_console(site):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Connect this site's Search Console first (see GET /v1/sites/{site_id}/sync).",
+        )
+    return site, dependencies.warehouse_reports
+
+
+def _report_range(dependencies: APIDependencies, start: date | None, end: date | None) -> tuple[date, date]:
+    """Default: the last 28 settled days, as Search Console's own reports show."""
+    oldest, newest = sync_window(dependencies.clock())
+    end = end or newest
+    start = start or end - timedelta(days=27)
+    if start > end:
+        raise HTTPException(status_code=422, detail="start must not be after end.")
+    if (end - start).days + 1 > WINDOW_DAYS:
+        raise HTTPException(status_code=422, detail=f"The range can be at most {WINDOW_DAYS} days.")
+    return start, end
 
 
 def _require_keywords(dependencies: APIDependencies):
