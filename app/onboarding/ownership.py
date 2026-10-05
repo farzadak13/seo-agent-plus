@@ -181,3 +181,20 @@ class OwnershipVerifier:
         if not same_site(home_url, site_url) or urlparse(home_url).path not in {"", "/"}:
             return None, "The WordPress site reports a different address than this site."
         return METHOD_CONNECTOR, ""
+
+
+def site_may_read_search_console(site) -> bool:
+    """Whether a site's Search Console data may be read for it at all.
+
+    The rule an analysis applies, shared by the warehouse sync and its status:
+    with the operator's shared account, only a proven site and exactly its own
+    property; with the customer's own Google grant, a property that covers the
+    site.
+    """
+    if site.gsc is None or getattr(site.status, "value", site.status) != "active":
+        return False
+    if credential_is_shared(site.gsc.credential_ref):
+        return site.ownership_verified_at is not None and property_matches_site(
+            site.gsc.property_url, str(site.base_url)
+        )
+    return property_covers_site(site.gsc.property_url, str(site.base_url))

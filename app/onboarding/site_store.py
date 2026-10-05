@@ -62,6 +62,14 @@ class SiteStore:
         )
         return updated
 
+    def list_all(self) -> list[Site]:
+        """Every site of every tenant. Operational use only (the warehouse
+        sync); never serve a tenant from this."""
+        return [
+            Site.model_validate(record.payload)
+            for record in self._repository.list(aggregate_type=SITE_AGGREGATE_TYPE)
+        ]
+
     def list_for_tenant(self, tenant_id: str) -> list[Site]:
         sites: list[Site] = []
         cursor = None

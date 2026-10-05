@@ -95,3 +95,37 @@ class SyncDayStatus(BaseModel):
     query_rows_capped: bool
     fetched_at: datetime
     error: str | None = None
+
+
+class SyncState(StrEnum):
+    NOT_CONNECTED = "not_connected"  # no Search Console property on the site
+    NOT_ELIGIBLE = "not_eligible"    # connected, but ownership not proven
+    BACKFILLING = "backfilling"      # days in the window still to fetch
+    UP_TO_DATE = "up_to_date"        # every day in the window is stored
+    FAILING = "failing"              # the newest settled days keep failing
+
+
+class SyncFailure(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    day: date
+    # Generic: what the customer may read. The ledger keeps the operator's detail.
+    message: str
+
+
+class SyncSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    site_id: str
+    state: SyncState
+    property_url: str | None = None
+    window_start: date | None = None
+    window_end: date | None = None
+    days_in_window: int = Field(default=0, ge=0)
+    synced_days: int = Field(default=0, ge=0)
+    failed_days: int = Field(default=0, ge=0)
+    progress: float = Field(default=0.0, ge=0, le=1)
+    newest_synced_day: date | None = None
+    oldest_synced_day: date | None = None
+    capped_days: list[date] = Field(default_factory=list)
+    recent_failures: list[SyncFailure] = Field(default_factory=list)

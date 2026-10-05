@@ -102,10 +102,14 @@ class PostgresWarehouse:
             )
 
     def record_failure(self, *, site_id: str, day: date, property_url: str, error: str) -> None:
-        """Note a failed fetch, without disturbing a day already stored.
+        """Note a failed fetch, without disturbing a good copy of the same day.
 
-        A good earlier copy of the day stays as it is and stays 'synced': a
-        failed refetch is not a reason to show a gap.
+        A good earlier copy from the same property stays as it is and stays
+        'synced': a failed refetch is not a reason to show a gap. A copy from
+        a different property is not that: the site has moved on, so the
+        failure under the new property replaces it. Otherwise the failure was
+        recorded nowhere, the day looked due on every round (no retry delay),
+        and the status never showed it.
         """
         with self._transaction() as cursor:
             cursor.execute(
@@ -114,9 +118,11 @@ class PostgresWarehouse:
                 VALUES (%s, %s, %s, 'failed', %s, %s)
                 ON CONFLICT (site_id, day) DO UPDATE SET
                     property_url = EXCLUDED.property_url,
+                    status = 'failed',
                     fetched_at = EXCLUDED.fetched_at,
                     error = EXCLUDED.error
                 WHERE gsc_sync_days.status = 'failed'
+                   OR gsc_sync_days.property_url <> EXCLUDED.property_url
                 """,
                 (site_id, day, property_url, self._clock(), error[:500]),
             )
@@ -151,6 +157,20 @@ class PostgresWarehouse:
                 (site_id, property_url, start, end),
             )
             return {row[0] for row in cursor.fetchall()}
+
+    def ledger(self, *, site_id: str, start: date, end: date) -> list[SyncDayStatus]:
+        """Every ledger entry of a site within the range, oldest first."""
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT day, property_url, status, totals_rows, page_rows, query_rows,"
+                " page_rows_capped, query_rows_capped, fetched_at, error"
+                " FROM gsc_sync_days WHERE site_id = %s AND day BETWEEN %s AND %s ORDER BY day",
+                (site_id, start, end),
+            )
+            rows = cursor.fetchall()
+        keys = ("day", "property_url", "status", "totals_rows", "page_rows", "query_rows",
+                "page_rows_capped", "query_rows_capped", "fetched_at", "error")
+        return [SyncDayStatus(site_id=site_id, **dict(zip(keys, row))) for row in rows]
 
     def day_totals(self, *, site_id: str, day: date) -> dict[str, tuple[int, int, float]]:
         """{device: (clicks, impressions, position_sum)} for one stored day."""

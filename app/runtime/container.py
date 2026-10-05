@@ -16,6 +16,8 @@ from app.observability import InMemoryEventSink, InMemoryMetricsSink, Observabil
 from app.onboarding.secrets import EnvironmentSecretResolver
 from app.onboarding.google_oauth import GoogleOAuthConfig, GoogleOAuthService
 from app.runtime.keywords import KeywordIntel, build_keyword_intel
+from app.runtime.warehouse import WarehouseLoop, build_warehouse
+from app.warehouse.store import PostgresWarehouse
 from app.onboarding.ownership import OwnershipVerifier
 from app.onboarding.vault import CompositeSecretResolver, Keyring, SecretVault
 from app.onboarding.site_store import SiteStore
@@ -54,14 +56,22 @@ class RuntimeContainer:
     vault: SecretVault | None = None
     google_oauth: GoogleOAuthService | None = None
     keywords: KeywordIntel | None = None
+    warehouse: PostgresWarehouse | None = None
+    warehouse_loop: WarehouseLoop | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
 
     def start(self) -> None:
         if self.config.worker_enabled:
             self.worker.start()
+            # Only beside the worker: the worker's lease is what makes this
+            # the single process, so two servers never sync the same day.
+            if self.warehouse_loop is not None:
+                self.warehouse_loop.start()
 
     def stop(self) -> None:
+        if self.warehouse_loop is not None:
+            self.warehouse_loop.stop()
         self.worker.stop()
 
 
@@ -92,6 +102,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     )
 
     gsc_property_lister = None
+    transport = None
     if config.gsc_mode == "live":
         # Built here rather than per run: one session, one connection pool, and
         # one place where the egress proxy is configured. Token minting shares
@@ -113,6 +124,11 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         )
     adapters = SiteAdapterFactory(secret_resolver)
     keywords = build_keyword_intel(config, repository=repository, secret_resolver=secret_resolver)
+    warehouse, warehouse_runner = build_warehouse(
+        config, site_store=site_store, secret_resolver=secret_resolver,
+        transport=transport,
+    )
+    warehouse_loop = WarehouseLoop(warehouse_runner) if warehouse_runner is not None else None
 
     google_oauth = None
     if config.google_sign_in_enabled:
@@ -193,6 +209,8 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         vault=vault,
         google_oauth=google_oauth,
         keywords=keywords,
+        warehouse=warehouse,
+        warehouse_loop=warehouse_loop,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
     )
@@ -234,6 +252,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             ownership_verifier=OwnershipVerifier(adapter_factory=container.adapters),
             google_oauth=container.google_oauth,
             keywords=container.keywords,
+            warehouse=container.warehouse,
             tenant_name=lambda tenant_id: getattr(
                 container.tenant_store.find(tenant_id), "name", tenant_id
             ),

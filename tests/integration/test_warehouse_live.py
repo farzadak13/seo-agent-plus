@@ -8,7 +8,7 @@ the fetch -> store path end to end.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -162,3 +162,91 @@ def test_the_pages_cap_is_recorded():
     store = warehouse()
     store.replace_day(a_day(1).model_copy(update={"page_rows_capped": True}))
     assert store.sync_status(site_id="s1", day=DAY).page_rows_capped is True
+
+
+# ---- step 2: rounds against the real ledger ------------------------------------
+
+
+def _site(property_url=PROPERTY):
+    from app.models.sites import GSCConnectionConfig, SecretProvider, SecretRef, Site
+
+    return Site(
+        site_id="s1", principal_id="p1", name="T", base_url="https://tennisino.com/",
+        gsc=GSCConnectionConfig(
+            property_url=property_url,
+            credential_ref=SecretRef(provider=SecretProvider.DATABASE, key="tenant:p1/google_refresh_token"),
+            auth_mode="oauth_refresh_token",
+        ),
+    )
+
+
+def _quiet_google(dimensions, day, data_state):
+    from app.warehouse.fetch import QueryAnswer
+
+    d = day.isoformat()
+    rows = {TOTALS_DIMENSIONS: [{"keys": [d, "MOBILE"], "clicks": 1, "impressions": 10, "position": 3.0}]}
+    return QueryAnswer(rows=rows.get(dimensions, []))
+
+
+def _runner(site):
+    from app.warehouse.runner import WarehouseSyncRunner
+
+    return WarehouseSyncRunner(
+        store=warehouse(), sites=lambda: [site], eligible=lambda s: True,
+        query_for=lambda s: _quiet_google,
+        clock=lambda: datetime(2026, 10, 5, 12, tzinfo=timezone.utc), days_per_round=4,
+    )
+
+
+def test_rounds_backfill_newest_first_and_continue_where_they_stopped():
+    from app.warehouse.planner import summarize, sync_window
+
+    _runner(_site()).run_round()
+    _runner(_site()).run_round()
+
+    window = sync_window(datetime(2026, 10, 5, 12, tzinfo=timezone.utc))
+    entries = warehouse().ledger(site_id="s1", start=window[0], end=window[1])
+    assert len(entries) == 8
+    assert max(e.day for e in entries) == window[1], "newest first"
+    summary = summarize(site_id="s1", property_url=PROPERTY, window=window, entries=entries)
+    assert summary.synced_days == 8 and summary.state == "backfilling"
+
+
+def test_switching_property_refetches_from_the_newest_day():
+    _runner(_site()).run_round()
+    report = _runner(_site("https://tennisino.com/")).run_round()
+    assert report.synced == 4
+    newest = max(e.day for e in warehouse().ledger(site_id="s1", start=date(2025, 1, 1), end=date(2027, 1, 1)))
+    assert warehouse().sync_status(site_id="s1", day=newest).property_url == "https://tennisino.com/"
+
+
+def test_a_failure_after_switching_property_is_recorded_waits_and_shows():
+    """The review's case: a day synced under the old property, then a failed
+    fetch under the new one. It must be recorded, wait before the retry, and
+    count in the status."""
+    from app.warehouse.planner import LedgerEntry, plan_days, summarize
+
+    store = warehouse()  # its clock: 2026-10-05
+    store.replace_day(a_day(10))  # synced under PROPERTY
+    new_property = "https://tennisino.com/"
+    store.record_failure(site_id="s1", day=DAY, property_url=new_property, error="403")
+
+    status = store.sync_status(site_id="s1", day=DAY)
+    assert (status.status, status.property_url) == ("failed", new_property)
+
+    entries = {e.day: LedgerEntry(e.property_url, e.status.value, e.fetched_at)
+               for e in store.ledger(site_id="s1", start=DAY, end=DAY)}
+    an_hour_later = status.fetched_at + timedelta(hours=1)
+    assert plan_days(window=(DAY, DAY), property_url=new_property, entries=entries,
+                     now=an_hour_later, retry_after=timedelta(hours=6), limit=5) == [], "waits"
+
+    summary = summarize(site_id="s1", property_url=new_property, window=(DAY, DAY),
+                        entries=store.ledger(site_id="s1", start=DAY, end=DAY))
+    assert summary.failed_days == 1
+
+
+def test_a_failure_under_the_same_property_still_keeps_the_good_copy():
+    store = warehouse()
+    store.replace_day(a_day(10))
+    store.record_failure(site_id="s1", day=DAY, property_url=PROPERTY, error="500")
+    assert store.sync_status(site_id="s1", day=DAY).status == "synced"

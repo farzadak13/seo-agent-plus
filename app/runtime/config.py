@@ -57,6 +57,11 @@ class RuntimeConfig(BaseModel):
     # Requests a day any one customer can cause, so one cannot spend everyone's.
     keyword_tenant_daily_budget: int = Field(default=10, ge=0, le=10_000)
 
+    # Search Console warehouse: a background loop keeps 16 months of each
+    # eligible site's data in PostgreSQL for the dashboard. Off by default;
+    # it needs live Search Console and runs only in the worker process.
+    warehouse_sync_enabled: bool = False
+
     @field_validator("api_key")
     @classmethod
     def valid_key(cls, value):
@@ -86,6 +91,12 @@ class RuntimeConfig(BaseModel):
         if self.public_base_url and not self.public_base_url.startswith("https://"):
             if self.environment.strip().lower() == "production":
                 raise ValueError("SEO_AGENT_PUBLIC_BASE_URL must be https in production.")
+        return self
+
+    @model_validator(mode="after")
+    def warehouse_needs_live_search_console(self):
+        if self.warehouse_sync_enabled and self.gsc_mode != "live":
+            raise ValueError("SEO_AGENT_WAREHOUSE_SYNC_ENABLED needs SEO_AGENT_GSC_MODE=live.")
         return self
 
     @model_validator(mode="after")
@@ -182,6 +193,7 @@ class RuntimeConfig(BaseModel):
             seosignal_api_key_ref=_env_optional("SEO_AGENT_SEOSIGNAL_API_KEY_REF"),
             keyword_daily_budget=int(os.getenv("SEO_AGENT_KEYWORD_DAILY_BUDGET", "40")),
             keyword_tenant_daily_budget=int(os.getenv("SEO_AGENT_KEYWORD_TENANT_DAILY_BUDGET", "10")),
+            warehouse_sync_enabled=_env_bool("SEO_AGENT_WAREHOUSE_SYNC_ENABLED", False),
         )
 
 

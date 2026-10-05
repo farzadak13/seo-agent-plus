@@ -55,7 +55,10 @@ from app.onboarding.ownership import (
     credential_is_shared,
     property_covers_site,
     property_matches_site,
+    site_may_read_search_console,
 )
+from app.warehouse.models import SyncState, SyncSummary
+from app.warehouse.planner import summarize, sync_window
 from app.onboarding.site_store import SiteStore
 from app.persistence.contracts import (
     InvalidCursorError,
@@ -96,7 +99,12 @@ class APIDependencies:
         google_oauth=None,
         tenant_name=None,
         keywords=None,
+        warehouse=None,
+        clock=None,
     ) -> None:
+        # None: the Search Console warehouse is switched off on this server.
+        self.warehouse = warehouse
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         # None: no keyword provider configured (SEO_AGENT_KEYWORD_PROVIDER).
         self.keywords = keywords
         # None: SEO_AGENT_GOOGLE_OAUTH_* not configured; only operator
@@ -451,6 +459,30 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
                 authenticated_principal_id, type(exc).__name__, exc.detail or "no detail",
             )
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    @app.get("/v1/sites/{site_id}/sync", response_model=SyncSummary)
+    def site_sync_status(
+        site_id: str, authenticated_principal_id: str = Depends(principal_id)
+    ) -> SyncSummary:
+        """How far the dashboard's Search Console history has been fetched."""
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, authenticated_principal_id)
+        if dependencies.warehouse is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Search Console history is not enabled on this server.",
+            )
+        if site.gsc is None:
+            return SyncSummary(site_id=site_id, state=SyncState.NOT_CONNECTED)
+        if not site_may_read_search_console(site):
+            return SyncSummary(
+                site_id=site_id, state=SyncState.NOT_ELIGIBLE, property_url=site.gsc.property_url
+            )
+        window = sync_window(dependencies.clock())
+        entries = dependencies.warehouse.ledger(site_id=site_id, start=window[0], end=window[1])
+        return summarize(
+            site_id=site_id, property_url=site.gsc.property_url, window=window, entries=entries
+        )
 
     @app.get("/v1/sites/{site_id}/capabilities")
     def site_capabilities(site_id: str, authenticated_principal_id: str = Depends(principal_id)):
