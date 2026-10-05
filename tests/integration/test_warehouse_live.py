@@ -91,7 +91,7 @@ def test_a_failed_refetch_leaves_the_good_copy_and_its_status():
     store.replace_day(a_day(10))
     store.record_failure(site_id="s1", day=DAY, property_url=PROPERTY, error="boom")
 
-    assert store.sync_status(site_id="s1", day=DAY)["status"] == "synced"
+    assert store.sync_status(site_id="s1", day=DAY).status == "synced"
     assert store.day_totals(site_id="s1", day=DAY) == {"MOBILE": (10, 100, 350.0)}
 
 
@@ -99,8 +99,8 @@ def test_a_day_never_stored_records_its_failure():
     store = warehouse()
     store.record_failure(site_id="s1", day=DAY, property_url=PROPERTY, error="x" * 900)
     status = store.sync_status(site_id="s1", day=DAY)
-    assert status["status"] == "failed"
-    assert len(status["error"]) == 500, "bounded"
+    assert status.status == "failed"
+    assert len(status.error) == 500, "bounded"
     assert store.synced_days(site_id="s1", property_url=PROPERTY, start=DAY, end=DAY) == set()
 
 
@@ -130,17 +130,35 @@ def test_persian_text_round_trips_exactly():
 
 
 def test_fetch_then_store_end_to_end():
-    def search_console(dimensions, day):
+    from app.warehouse.fetch import QueryAnswer
+
+    def search_console(dimensions, day, data_state):
         d = day.isoformat()
-        return {
+        return QueryAnswer(rows={
             TOTALS_DIMENSIONS: [{"keys": [d, "DESKTOP"], "clicks": 5, "impressions": 50, "position": 2.0}],
             PAGE_DIMENSIONS: [{"keys": [d, "https://tennisino.com/a", "DESKTOP"],
                                "clicks": 5, "impressions": 50, "position": 2.0}],
             QUERY_DIMENSIONS: [{"keys": [d, "https://tennisino.com/a", "راكت", "DESKTOP"],
                                 "clicks": 4, "impressions": 40, "position": 2.5}],
-        }[dimensions]
+        }[dimensions])
 
-    result = DaySync(warehouse()).sync_day(site_id="s1", property_url=PROPERTY, day=DAY, query=search_console)
+    result = DaySync(warehouse()).sync_day(
+        site_id="s1", property_url=PROPERTY, day=DAY, final_through=DAY, query=search_console
+    )
 
-    assert result["query_rows"] == 1
+    assert result.query_rows == 1
     assert warehouse().day_totals(site_id="s1", day=DAY) == {"DESKTOP": (5, 50, 100.0)}
+
+
+def test_a_later_failure_under_another_property_records_that_property():
+    store = warehouse()
+    store.record_failure(site_id="s1", day=DAY, property_url="https://old.example/", error="a")
+    store.record_failure(site_id="s1", day=DAY, property_url=PROPERTY, error="b")
+    status = store.sync_status(site_id="s1", day=DAY)
+    assert (status.property_url, status.error) == (PROPERTY, "b")
+
+
+def test_the_pages_cap_is_recorded():
+    store = warehouse()
+    store.replace_day(a_day(1).model_copy(update={"page_rows_capped": True}))
+    assert store.sync_status(site_id="s1", day=DAY).page_rows_capped is True

@@ -81,8 +81,9 @@ CREATE TABLE IF NOT EXISTS gsc_sync_days (
     totals_rows INTEGER NOT NULL DEFAULT 0,
     page_rows INTEGER NOT NULL DEFAULT 0,
     query_rows INTEGER NOT NULL DEFAULT 0,
-    -- Search Console returns at most 50,000 rows a day per search type; a
-    -- day that reached it is complete only up to that cap, and says so.
+    -- Search Console returns at most 50,000 rows a day per request; a day
+    -- that reached it is complete only up to that cap, and says so.
+    page_rows_capped BOOLEAN NOT NULL DEFAULT FALSE,
     query_rows_capped BOOLEAN NOT NULL DEFAULT FALSE,
     fetched_at TIMESTAMPTZ NOT NULL,
     error TEXT NULL,

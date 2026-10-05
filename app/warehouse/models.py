@@ -6,7 +6,7 @@ rows can be summed and the average position recovered exactly afterwards.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -49,6 +49,49 @@ class GSCDay(BaseModel):
     totals: list[Metrics]
     pages: list[PageMetrics]
     queries: list[QueryMetrics]
-    # True when the query rows reached Search Console's daily cap, so the day
-    # is complete only up to it. Totals are unaffected: they have no query.
+    # True when a request reached Search Console's daily row cap, so that
+    # breakdown is complete only up to it. Totals are unaffected: they have
+    # no page or query and stay far below it.
+    page_rows_capped: bool = False
     query_rows_capped: bool = False
+
+
+class SyncStatus(StrEnum):
+    SYNCED = "synced"
+    FAILED = "failed"
+
+
+class DaySyncResult(BaseModel):
+    """What one day's sync stored."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    site_id: str
+    day: date
+    totals_rows: int = Field(ge=0)
+    page_rows: int = Field(ge=0)
+    query_rows: int = Field(ge=0)
+    page_rows_capped: bool
+    query_rows_capped: bool
+
+
+class SyncDayStatus(BaseModel):
+    """The sync ledger's entry for one site and day.
+
+    ``error`` is the operator's diagnosis and can name internals; whatever
+    shows it to a customer must say something generic instead.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    site_id: str
+    day: date
+    property_url: str
+    status: SyncStatus
+    totals_rows: int = Field(ge=0)
+    page_rows: int = Field(ge=0)
+    query_rows: int = Field(ge=0)
+    page_rows_capped: bool
+    query_rows_capped: bool
+    fetched_at: datetime
+    error: str | None = None

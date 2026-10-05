@@ -11,7 +11,7 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
 
-from app.warehouse.models import GSCDay
+from app.warehouse.models import GSCDay, SyncDayStatus
 
 
 class PostgresWarehouse:
@@ -84,20 +84,21 @@ class PostgresWarehouse:
                 """
                 INSERT INTO gsc_sync_days (
                     site_id, day, property_url, status, totals_rows, page_rows, query_rows,
-                    query_rows_capped, fetched_at, error
-                ) VALUES (%s, %s, %s, 'synced', %s, %s, %s, %s, %s, NULL)
+                    page_rows_capped, query_rows_capped, fetched_at, error
+                ) VALUES (%s, %s, %s, 'synced', %s, %s, %s, %s, %s, %s, NULL)
                 ON CONFLICT (site_id, day) DO UPDATE SET
                     property_url = EXCLUDED.property_url,
                     status = 'synced',
                     totals_rows = EXCLUDED.totals_rows,
                     page_rows = EXCLUDED.page_rows,
                     query_rows = EXCLUDED.query_rows,
+                    page_rows_capped = EXCLUDED.page_rows_capped,
                     query_rows_capped = EXCLUDED.query_rows_capped,
                     fetched_at = EXCLUDED.fetched_at,
                     error = NULL
                 """,
                 (data.site_id, data.day, data.property_url, len(data.totals), len(data.pages),
-                 len(data.queries), data.query_rows_capped, self._clock()),
+                 len(data.queries), data.page_rows_capped, data.query_rows_capped, self._clock()),
             )
 
     def record_failure(self, *, site_id: str, day: date, property_url: str, error: str) -> None:
@@ -112,6 +113,7 @@ class PostgresWarehouse:
                 INSERT INTO gsc_sync_days (site_id, day, property_url, status, fetched_at, error)
                 VALUES (%s, %s, %s, 'failed', %s, %s)
                 ON CONFLICT (site_id, day) DO UPDATE SET
+                    property_url = EXCLUDED.property_url,
                     fetched_at = EXCLUDED.fetched_at,
                     error = EXCLUDED.error
                 WHERE gsc_sync_days.status = 'failed'
@@ -160,15 +162,17 @@ class PostgresWarehouse:
             )
             return {device: (clicks, impressions, position_sum) for device, clicks, impressions, position_sum in cursor.fetchall()}
 
-    def sync_status(self, *, site_id: str, day: date) -> dict | None:
+    def sync_status(self, *, site_id: str, day: date) -> SyncDayStatus | None:
         with self._transaction() as cursor:
             cursor.execute(
-                "SELECT property_url, status, totals_rows, page_rows, query_rows, query_rows_capped, error"
+                "SELECT property_url, status, totals_rows, page_rows, query_rows,"
+                " page_rows_capped, query_rows_capped, fetched_at, error"
                 " FROM gsc_sync_days WHERE site_id = %s AND day = %s",
                 (site_id, day),
             )
             row = cursor.fetchone()
         if row is None:
             return None
-        keys = ("property_url", "status", "totals_rows", "page_rows", "query_rows", "query_rows_capped", "error")
-        return dict(zip(keys, row))
+        keys = ("property_url", "status", "totals_rows", "page_rows", "query_rows",
+                "page_rows_capped", "query_rows_capped", "fetched_at", "error")
+        return SyncDayStatus(site_id=site_id, day=day, **dict(zip(keys, row)))
