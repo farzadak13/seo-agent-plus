@@ -138,6 +138,11 @@ def test_an_empty_directory_is_reported_clearly(tmp_path):
         discover_migrations(tmp_path)
 
 
+# The project's own migrations, whatever they are today: these tests are about
+# the runner, and must not need editing each time a migration is added.
+PROJECT_VERSIONS = tuple(item.version for item in discover_migrations("migrations"))
+
+
 def test_the_project_migrations_are_discoverable_and_ordered():
     versions = [item.version for item in discover_migrations("migrations")]
 
@@ -168,7 +173,7 @@ def test_a_fresh_database_receives_every_migration(migrations_dir):
         connection_factory=factory_for(connection),
     )
 
-    assert result.applied == ("001", "002", "003")
+    assert result.applied == PROJECT_VERSIONS
     assert result.skipped == ()
     assert result.changed is True
 
@@ -189,7 +194,7 @@ def test_a_second_run_applies_nothing(migrations_dir):
     )
 
     assert result.applied == ()
-    assert result.skipped == ("001", "002", "003")
+    assert result.skipped == PROJECT_VERSIONS
     assert result.changed is False
     assert second.commits == 0
 
@@ -214,7 +219,7 @@ def test_editing_an_applied_migration_is_refused(migrations_dir):
 
 
 def test_a_failing_migration_is_rolled_back_and_not_recorded(migrations_dir):
-    (migrations_dir / "004_broken.sql").write_text(
+    (migrations_dir / "999_broken.sql").write_text(
         "SELECT * FROM missing_table;", encoding="utf-8"
     )
     connection = FakeConnection(fail_on="missing_table")
@@ -227,7 +232,7 @@ def test_a_failing_migration_is_rolled_back_and_not_recorded(migrations_dir):
         )
 
     assert connection.rollbacks == 1
-    assert [version for version, _ in connection.recorded] == ["001", "002", "003"]
+    assert [version for version, _ in connection.recorded] == list(PROJECT_VERSIONS)
 
 
 def test_the_run_is_serialized_by_an_advisory_lock(migrations_dir):
@@ -245,7 +250,7 @@ def test_the_run_is_serialized_by_an_advisory_lock(migrations_dir):
 
 
 def test_the_lock_is_released_even_when_a_migration_fails(migrations_dir):
-    (migrations_dir / "004_broken.sql").write_text(
+    (migrations_dir / "999_broken.sql").write_text(
         "SELECT * FROM missing_table;", encoding="utf-8"
     )
     connection = FakeConnection(fail_on="missing_table")
