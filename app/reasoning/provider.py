@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from datetime import datetime, timezone
 
@@ -37,6 +38,24 @@ class ReasoningProviderError(RuntimeError):
         self.retryable = retryable
         self.attempt_count = attempt_count
         super().__init__(message)
+
+
+# One markdown code fence around the whole answer, with or without a
+# language tag: ```json\n{...}\n```. Chat models add it out of habit even
+# when told to return only JSON.
+_FENCED = re.compile(r"\A```[A-Za-z0-9_-]*[ \t]*\r?\n(?P<body>.*?)\r?\n?```\Z", re.DOTALL)
+
+
+def unwrap_json(raw_output: str) -> str:
+    """The JSON text of an answer, without a markdown fence wrapped around it.
+
+    Only a fence around the *whole* answer is removed. JSON found somewhere
+    inside prose is not dug out: an answer that is not JSON stays invalid,
+    rather than being guessed at.
+    """
+    text = raw_output.strip()
+    fenced = _FENCED.match(text)
+    return fenced.group("body").strip() if fenced else text
 
 
 class StructuredTitleReasoner(StrategicReasoner):
@@ -257,7 +276,7 @@ class StructuredTitleReasoner(StrategicReasoner):
                     )
 
                 try:
-                    payload = json.loads(raw_output)
+                    payload = json.loads(unwrap_json(raw_output))
                 except json.JSONDecodeError as exc:
                     raise ReasoningProviderError(
                         failure_type=LLMFailureType.INVALID_JSON,

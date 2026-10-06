@@ -85,7 +85,9 @@ sudo -u postgres createdb "\$SCRATCH"
 trap 'sudo -u postgres dropdb --if-exists "\$SCRATCH"' EXIT
 sudo -u postgres pg_restore --no-owner --exit-on-error --dbname="\$SCRATCH" "\$LATEST"
 
-COUNT_SQL="SELECT aggregate_type || ' ' || count(*) FROM persistence_records GROUP BY 1 ORDER BY 1"
+# Grouped by the column, not by position: "GROUP BY 1" would name the whole
+# first output column, count(*) included, which PostgreSQL refuses.
+COUNT_SQL="SELECT aggregate_type || ' ' || count(*) FROM persistence_records GROUP BY aggregate_type ORDER BY aggregate_type"
 echo
 echo "records in the backup:"
 sudo -u postgres psql -tA -d "\$SCRATCH" -c "\$COUNT_SQL" | sed 's/^/  /'

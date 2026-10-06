@@ -559,3 +559,43 @@ def test_router_context_can_supply_attempt_recorder(
         for event in attempt_recorder.events
     )
     assert attempt_recorder.events[1].total_tokens == 30
+
+
+# ---- answers wrapped in a markdown fence (Claude on Arvan does this) ----------
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        lambda body: f"```json\n{body}\n```",
+        lambda body: f"```\n{body}\n```",
+        lambda body: f"\n  ```JSON\r\n{body}\r\n```  \n",
+        lambda body: f"```json\n{body}```",
+    ],
+)
+def test_an_answer_in_a_markdown_fence_is_read(wrap):
+    transport = FakeTransport([wrap(valid_output())])
+    reasoner = StructuredTitleReasoner(transport=transport)
+
+    candidates = reasoner.generate_title_candidates(make_input())
+
+    assert [c.candidate_id for c in candidates] == ["candidate-1", "candidate-2"]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        "Here are the titles:\n```json\n{body}\n```",  # prose around the fence
+        "```json\n{body}\n```\nI hope this helps.",
+        "Sure! {body}",  # JSON inside prose is not dug out
+        "```json\nnot json at all\n```",
+    ],
+)
+def test_anything_but_a_lone_fence_is_still_invalid_json(answer):
+    transport = FakeTransport([answer.replace("{body}", valid_output())])
+    reasoner = StructuredTitleReasoner(transport=transport)
+
+    with pytest.raises(ReasoningProviderError) as exc_info:
+        reasoner.generate_title_candidates(make_input())
+
+    assert exc_info.value.failure_type == LLMFailureType.INVALID_JSON

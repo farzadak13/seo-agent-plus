@@ -69,17 +69,38 @@ def main() -> int:
     print(f"usage: {transport.last_usage}")
 
     print("\n--- 2. a full title proposal ---")
-    reasoner = StructuredTitleReasoner(transport=transport, max_retries=config.max_retries)
+    recording = RecordingTransport(transport)
+    reasoner = StructuredTitleReasoner(transport=recording, max_retries=config.max_retries)
     started = time.monotonic()
     try:
         candidates = reasoner.generate_title_candidates(sample_input())
     except Exception as exc:  # the reasoner raises several kinds; all mean the same here
         print(f"FAILED: {type(exc).__name__}: {exc}")
+        if recording.last_output is not None:
+            # What the model said, so a shape problem is seen rather than guessed.
+            # Model output only: the key never passes through here.
+            print(f"the model answered ({len(recording.last_output)} chars), starting with:")
+            print(f"  {recording.last_output[:400]!r}")
         return 1
     print(f"ok in {time.monotonic() - started:.1f}s, {len(candidates)} candidates:")
     for candidate in candidates:
         print(f"  {candidate.title}  ({len(candidate.title)} chars)")
     return 0 if candidates else 1
+
+
+class RecordingTransport:
+    """The real transport, keeping the last answer so a failure can show it."""
+
+    def __init__(self, inner) -> None:
+        self._inner = inner
+        self.last_output: str | None = None
+
+    def complete(self, *, messages):
+        self.last_output = self._inner.complete(messages=messages)
+        return self.last_output
+
+    def __getattr__(self, name):  # last_usage, last_response_metadata, provider_id...
+        return getattr(self._inner, name)
 
 
 def sample_input() -> TitleReasoningInput:
