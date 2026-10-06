@@ -77,13 +77,13 @@ echo "installed"
 say "migrations"
 # Before the swap, deliberately. New code against an old schema fails in ways
 # that read as application bugs rather than as a deployment mistake.
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
-( cd "$TARGET" && sudo -u "$APP_USER" \
-    env SEO_AGENT_DATABASE_DSN="$SEO_AGENT_DATABASE_DSN" \
-    "${VENV}/bin/python" -m app.migrate )
+# The DSN reaches Python through the environment only: `sudo … env NAME=value`
+# put the database password in a process's argv, readable through `ps`.
+SEO_AGENT_DATABASE_DSN="$(sed -n 's/^SEO_AGENT_DATABASE_DSN=//p' "$ENV_FILE" | head -n1)"
+SEO_AGENT_DATABASE_DSN="${SEO_AGENT_DATABASE_DSN%\"}"; SEO_AGENT_DATABASE_DSN="${SEO_AGENT_DATABASE_DSN#\"}"
+[[ -n "$SEO_AGENT_DATABASE_DSN" ]] || { echo "SEO_AGENT_DATABASE_DSN is not in $ENV_FILE." >&2; exit 1; }
+export SEO_AGENT_DATABASE_DSN
+( cd "$TARGET" && runuser -u "$APP_USER" -- "${VENV}/bin/python" -m app.migrate )
 
 PREVIOUS=""
 if [[ -L "$CURRENT" ]]; then

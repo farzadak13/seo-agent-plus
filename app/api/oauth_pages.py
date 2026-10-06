@@ -80,3 +80,15 @@ def error_page(message: str) -> HTMLResponse:
         '<p class="muted">از هوشیار سئو دوباره «اتصال گوگل» را بزنید.</p>',
         status_code=400,
     )
+
+
+def sign_in_error_page(message: str, retry_url: str) -> HTMLResponse:
+    """A failed sign-in, with the way back to the sign-in page."""
+    return _page(
+        "ورود انجام نشد",
+        "<h1>ورود انجام نشد</h1>"
+        f'<p class="error"><bdi>{escape(message)}</bdi></p>'
+        '<p class="muted">اگر حساب هوشیار سئو ندارید، از مدیر حساب بخواهید برایتان بسازد.</p>'
+        f'<p><a href="{escape(retry_url, quote=True)}">بازگشت به صفحهٔ ورود</a></p>',
+        status_code=400,
+    )

@@ -82,15 +82,20 @@ class WarehouseLoop:
     job worker still running": the worker's database lease is what makes this
     the only process syncing, and a worker that has died has released it, so
     another server may now hold it and be syncing the same sites.
+
+    Anything with a ``run_round()`` can be run this way; the container runs
+    the hourly record cleanup on it too, under its own ``name``.
     """
 
     def __init__(
         self,
-        runner: WarehouseSyncRunner,
+        runner,
         *,
         interval_seconds: float = ROUND_INTERVAL_SECONDS,
         should_run=lambda: True,
+        name: str = "gsc-warehouse",
     ) -> None:
+        self._name = name
         self._runner = runner
         self._interval = interval_seconds
         self._should_run = should_run
@@ -105,7 +110,7 @@ class WarehouseLoop:
         if self.running:
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="gsc-warehouse", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=self._name, daemon=True)
         self._thread.start()
 
     def stop(self, timeout_seconds: float = 10.0) -> None:
@@ -119,9 +124,9 @@ class WarehouseLoop:
                 if self._should_run():
                     self._runner.run_round()
                 else:
-                    log.warning("warehouse: the job worker is not running; skipping this round")
+                    log.warning("%s: the job worker is not running; skipping this round", self._name)
             except Exception:
                 # A round that breaks must not end the loop: the next one may
                 # well succeed (the database back, a token refreshed).
-                log.exception("warehouse round failed")
+                log.exception("%s round failed", self._name)
             self._stop.wait(self._interval)

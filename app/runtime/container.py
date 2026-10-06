@@ -14,8 +14,12 @@ from app.api.auth import TenantAPIKeyAuthenticator
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.observability import InMemoryEventSink, InMemoryMetricsSink, ObservabilityContext
 from app.onboarding.secrets import EnvironmentSecretResolver
+from app.accounts.google_login import GoogleLogin
+from app.accounts.service import AuthService
+from app.accounts.store import AccountStore, SessionStore
 from app.onboarding.google_oauth import GoogleOAuthConfig, GoogleOAuthService
 from app.runtime.keywords import KeywordIntel, build_keyword_intel
+from app.runtime.maintenance import PURGE_INTERVAL_SECONDS, RecordPurge
 from app.runtime.warehouse import WarehouseLoop, build_warehouse
 from app.warehouse.reports import WarehouseReports
 from app.warehouse.store import PostgresWarehouse
@@ -56,9 +60,12 @@ class RuntimeContainer:
     action_store: ManagedActionStore
     vault: SecretVault | None = None
     google_oauth: GoogleOAuthService | None = None
+    auth: AuthService | None = None
+    google_login: GoogleLogin | None = None
     keywords: KeywordIntel | None = None
     warehouse: PostgresWarehouse | None = None
     warehouse_loop: WarehouseLoop | None = None
+    purge_loop: WarehouseLoop | None = None
     warehouse_reports: WarehouseReports | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
@@ -70,8 +77,12 @@ class RuntimeContainer:
             # the single process, so two servers never sync the same day.
             if self.warehouse_loop is not None:
                 self.warehouse_loop.start()
+            if self.purge_loop is not None:
+                self.purge_loop.start()
 
     def stop(self) -> None:
+        if self.purge_loop is not None:
+            self.purge_loop.stop()
         if self.warehouse_loop is not None:
             self.warehouse_loop.stop()
         self.worker.stop()
@@ -154,6 +165,20 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             vault=vault,
         )
 
+    # Dashboard sign-in: always available with passwords; with Google too
+    # when the OAuth client is configured.
+    auth = AuthService(accounts=AccountStore(repository), sessions=SessionStore(repository), tenants=tenant_store)
+    google_login = None
+    if config.google_sign_in_enabled:
+        google_login = GoogleLogin(
+            config=GoogleOAuthConfig(
+                client_id=config.google_oauth_client_id,
+                client_secret=config.google_oauth_client_secret,
+                public_base_url=config.public_base_url,
+            ),
+            repository=repository,
+        )
+
     # Stage 36: the title path is wired here or not at all. An enabled workflow
     # that cannot be built must fail startup rather than let runs report success
     # while silently producing no proposal.
@@ -215,9 +240,16 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         action_store=action_store,
         vault=vault,
         google_oauth=google_oauth,
+        auth=auth,
+        google_login=google_login,
         keywords=keywords,
         warehouse=warehouse,
         warehouse_loop=warehouse_loop,
+        # Beside the worker, like the warehouse: one server purges, not each.
+        purge_loop=WarehouseLoop(
+            RecordPurge(config.database_dsn), interval_seconds=PURGE_INTERVAL_SECONDS,
+            should_run=lambda: worker.running, name="record-purge",
+        ),
         warehouse_reports=WarehouseReports(config.database_dsn) if warehouse is not None else None,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
@@ -262,6 +294,10 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             keywords=container.keywords,
             warehouse=container.warehouse,
             warehouse_reports=container.warehouse_reports,
+            auth=container.auth,
+            google_login=container.google_login,
+            dashboard_url=resolved_config.dashboard_url or "/",
+            allowed_origins=resolved_config.dashboard_origins,
             tenant_name=lambda tenant_id: getattr(
                 container.tenant_store.find(tenant_id), "name", tenant_id
             ),

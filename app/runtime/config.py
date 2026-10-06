@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import os
+import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.gsc.transport import GOOGLE_API_BASE
 from app.ingestion.calendar import GSC_DATA_LAG_DAYS
+
+# An origin exactly: scheme, host, optional port. No wildcard, path or "null".
+_ORIGIN = re.compile(r"https?://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?")
 
 
 class RuntimeConfig(BaseModel):
@@ -35,6 +39,12 @@ class RuntimeConfig(BaseModel):
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: str | None = Field(default=None, repr=False)
     public_base_url: str | None = None
+
+    # The dashboard. Where a browser is sent after signing in with Google, and
+    # which other origins (besides the public base URL) may call the API with
+    # the session cookie, e.g. a separately hosted frontend on a subdomain.
+    dashboard_url: str | None = None
+    dashboard_origins: tuple[str, ...] = ()
 
     # Stage 36 — title recommendation path.
     title_workflow_enabled: bool = False
@@ -91,6 +101,27 @@ class RuntimeConfig(BaseModel):
         if self.public_base_url and not self.public_base_url.startswith("https://"):
             if self.environment.strip().lower() == "production":
                 raise ValueError("SEO_AGENT_PUBLIC_BASE_URL must be https in production.")
+        return self
+
+    @field_validator("dashboard_origins")
+    @classmethod
+    def dashboard_origins_are_exact(cls, origins):
+        """Real origins only. With credentials allowed, "*" or "null" would let
+        any site read a signed-in user's data and act as them."""
+        for origin in origins:
+            if not _ORIGIN.fullmatch(origin):
+                raise ValueError(
+                    f"SEO_AGENT_DASHBOARD_ORIGINS: {origin!r} is not an origin like "
+                    "https://app.example.com (no wildcard, path or 'null')."
+                )
+        return origins
+
+    @model_validator(mode="after")
+    def dashboard_origins_are_https_in_production(self):
+        if self.environment.strip().lower() == "production":
+            plain = [origin for origin in self.dashboard_origins if not origin.startswith("https://")]
+            if plain:
+                raise ValueError(f"SEO_AGENT_DASHBOARD_ORIGINS must be https in production: {plain}")
         return self
 
     @model_validator(mode="after")
@@ -189,6 +220,12 @@ class RuntimeConfig(BaseModel):
             google_oauth_client_id=_env_optional("SEO_AGENT_GOOGLE_OAUTH_CLIENT_ID"),
             google_oauth_client_secret=_env_optional("SEO_AGENT_GOOGLE_OAUTH_CLIENT_SECRET"),
             public_base_url=_env_optional("SEO_AGENT_PUBLIC_BASE_URL"),
+            dashboard_url=_env_optional("SEO_AGENT_DASHBOARD_URL"),
+            dashboard_origins=tuple(
+                origin.strip().rstrip("/")
+                for origin in os.getenv("SEO_AGENT_DASHBOARD_ORIGINS", "").split(",")
+                if origin.strip()
+            ),
             keyword_provider=os.getenv("SEO_AGENT_KEYWORD_PROVIDER", "none").strip().lower() or "none",
             seosignal_api_key_ref=_env_optional("SEO_AGENT_SEOSIGNAL_API_KEY_REF"),
             keyword_daily_budget=int(os.getenv("SEO_AGENT_KEYWORD_DAILY_BUDGET", "40")),

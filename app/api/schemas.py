@@ -5,6 +5,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
+from app.accounts.models import LoginMethod
 from app.models.jobs import JobStatus
 from app.models.runs import SEORunStatus
 from app.models.sites import SiteStatus
@@ -293,3 +294,24 @@ class KeywordVolumeRequest(BaseModel):
     keywords: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
         min_length=1, max_length=200
     )
+
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=256, repr=False)
+
+
+class SignedIn(BaseModel):
+    """Who the browser is signed in as. csrf_token goes back in X-CSRF-Token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: str
+    tenant_id: str
+    tenant_name: str
+    method: LoginMethod
+    csrf_token: str
+    expires_at: datetime

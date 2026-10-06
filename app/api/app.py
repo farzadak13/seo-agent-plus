@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 from contextlib import nullcontext
 from urllib.parse import parse_qs
 from collections.abc import Callable
@@ -10,7 +11,8 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api import oauth_pages
@@ -20,7 +22,11 @@ from app.action.executor import EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYP
 from app.action.store import ActionChangedError, ManagedActionStore
 from app.keyword_intel.contracts import KeywordProviderError
 from app.models.keyword_intel import VolumeLookup
+from app.accounts.google_login import LOGIN_CALLBACK_PATH, LOGIN_COOKIE, GoogleLoginError
+from app.accounts.service import SESSION_LIFETIME, SignInError, TooManyAttemptsError
 from app.api.schemas import (
+    LoginRequest,
+    SignedIn,
     KeywordVolumeRequest,
     ActionDecisionRequest,
     ActionListResponse,
@@ -113,7 +119,17 @@ class APIDependencies:
         warehouse=None,
         warehouse_reports=None,
         clock=None,
+        auth=None,
+        google_login=None,
+        dashboard_url: str = "/",
+        allowed_origins: tuple[str, ...] = (),
     ) -> None:
+        # None: no dashboard sign-in on this server; API keys only.
+        self.auth = auth
+        self.google_login = google_login
+        self.dashboard_url = dashboard_url
+        # Origins whose pages may sign in and call with the session cookie.
+        self.allowed_origins = tuple(origin.rstrip("/") for origin in allowed_origins)
         self.warehouse_reports = warehouse_reports
         # None: the Search Console warehouse is switched off on this server.
         self.warehouse = warehouse
@@ -148,13 +164,124 @@ class APIDependencies:
 def create_app(dependencies: APIDependencies) -> FastAPI:
     app = FastAPI(title="AI SEO Agent API", version="0.31.0")
     app.state.dependencies = dependencies
+    if dependencies.allowed_origins:
+        # A dashboard served from another origin (a subdomain, say) calls with
+        # the session cookie. Only the listed origins, never "*": with
+        # credentials, a wildcard would let any site read a signed-in user's data.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(dependencies.allowed_origins),
+            allow_credentials=True,
+            allow_methods=["GET", "POST", "PUT", "DELETE"],
+            allow_headers=["Content-Type", "X-CSRF-Token"],
+        )
 
     def principal_id(
+        request: Request,
         credentials: HTTPAuthorizationCredentials | None = Depends(
             dependencies.authenticator.scheme
         ),
     ) -> str:
-        return dependencies.authenticator.authenticate(credentials)
+        """The tenant acting: from an API key, or from a signed-in browser's session.
+
+        A key in the Authorization header always wins. Without one, the session
+        cookie is used; a request that changes anything must then also carry
+        the session's CSRF token in X-CSRF-Token, which another site's page
+        cannot read and so cannot send, though the browser would attach the
+        cookie for it.
+        """
+        if credentials is not None or dependencies.auth is None:
+            return dependencies.authenticator.authenticate(credentials)
+        found = dependencies.auth.session_for(request.cookies.get(SESSION_COOKIE))
+        if found is None:
+            return dependencies.authenticator.authenticate(None)  # 401, as before
+        session, _account = found
+        if request.method not in SAFE_METHODS:
+            sent = request.headers.get("x-csrf-token", "")
+            if not sent or not secrets.compare_digest(sent, session.csrf_token):
+                raise HTTPException(status_code=403, detail="Missing or wrong X-CSRF-Token.")
+        return session.tenant_id
+
+    # --- dashboard sign-in ------------------------------------------------------
+
+    @app.post("/v1/auth/login", response_model=SignedIn)
+    def login(request: LoginRequest, http_request: Request):
+        auth = _require_auth(dependencies)
+        _require_own_origin(dependencies, http_request)
+        address = http_request.client.host if http_request.client else "unknown"
+        try:
+            token, session = auth.sign_in_with_password(
+                email=request.email, password=request.password, address=address
+            )
+        except TooManyAttemptsError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+        except SignInError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        response = JSONResponse(_signed_in(dependencies, session).model_dump(mode="json"))
+        _set_session_cookie(response, token)
+        return response
+
+    @app.post("/v1/auth/logout", status_code=204)
+    def logout(http_request: Request):
+        auth = _require_auth(dependencies)
+        token = http_request.cookies.get(SESSION_COOKIE)
+        found = auth.session_for(token)
+        if found is not None:
+            sent = http_request.headers.get("x-csrf-token", "")
+            if not sent or not secrets.compare_digest(sent, found[0].csrf_token):
+                raise HTTPException(status_code=403, detail="Missing or wrong X-CSRF-Token.")
+            auth.sign_out(token)
+        response = Response(status_code=204)
+        response.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
+        return response
+
+    @app.get("/v1/auth/me", response_model=SignedIn)
+    def me(http_request: Request):
+        auth = _require_auth(dependencies)
+        found = auth.session_for(http_request.cookies.get(SESSION_COOKIE))
+        if found is None:
+            raise HTTPException(status_code=401, detail="Not signed in.")
+        return _signed_in(dependencies, found[0], found[1])
+
+    @app.get("/v1/auth/google/start", include_in_schema=False)
+    def google_login_start(http_request: Request):
+        if dependencies.auth is None or dependencies.google_login is None:
+            raise HTTPException(status_code=503, detail="Sign in with Google is not configured.")
+        address = http_request.client.host if http_request.client else "unknown"
+        try:
+            url, nonce = dependencies.google_login.start(address)
+        except GoogleLoginError as exc:
+            return oauth_pages.sign_in_error_page(str(exc), dependencies.dashboard_url)
+        response = RedirectResponse(url, status_code=status.HTTP_302_FOUND)
+        response.set_cookie(
+            LOGIN_COOKIE, nonce, max_age=600, path="/v1/auth/google",
+            secure=True, httponly=True, samesite="lax",
+        )
+        response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    @app.get(LOGIN_CALLBACK_PATH, include_in_schema=False)
+    def google_login_callback(
+        http_request: Request, state: str = "", code: str | None = None, error: str | None = None
+    ):
+        if dependencies.auth is None or dependencies.google_login is None:
+            raise HTTPException(status_code=503, detail="Sign in with Google is not configured.")
+        try:
+            identity = dependencies.google_login.complete(
+                state_id=state, code=code, error=error,
+                browser_nonce=http_request.cookies.get(LOGIN_COOKIE),
+            )
+            token, _session = dependencies.auth.sign_in_with_google(
+                subject=identity.subject, email=identity.email, email_verified=identity.email_verified
+            )
+        except (GoogleLoginError, SignInError) as exc:
+            page = oauth_pages.sign_in_error_page(str(exc), dependencies.dashboard_url)
+            page.delete_cookie(LOGIN_COOKIE, path="/v1/auth/google")
+            return page
+        response = RedirectResponse(dependencies.dashboard_url, status_code=status.HTTP_303_SEE_OTHER)
+        response.delete_cookie(LOGIN_COOKIE, path="/v1/auth/google")
+        _set_session_cookie(response, token)
+        return response
 
     @app.exception_handler(PersistenceConflictError)
     def conflict(_request, exc):
@@ -956,6 +1083,51 @@ def _report_range(dependencies: APIDependencies, start: date | None, end: date |
     if (end - start).days + 1 > WINDOW_DAYS:
         raise HTTPException(status_code=422, detail=f"The range can be at most {WINDOW_DAYS} days.")
     return start, end
+
+
+SESSION_COOKIE = "hoshyarseo_session"
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _require_auth(dependencies: APIDependencies):
+    if dependencies.auth is None:
+        raise HTTPException(status_code=503, detail="Dashboard sign-in is not configured.")
+    return dependencies.auth
+
+
+def _require_own_origin(dependencies: APIDependencies, request: Request) -> None:
+    """Signing in only from our own pages.
+
+    Otherwise another site could sign a visitor's browser into *its* account
+    here (login CSRF) and watch what they then connect. Browsers send Origin
+    on every POST; a request without one is not from a page.
+    """
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if not origin:
+        return
+    own = {f"{request.url.scheme}://{request.url.netloc}", *dependencies.allowed_origins}
+    if origin not in own:
+        raise HTTPException(status_code=403, detail="Sign in from HoshyarSEO's own pages.")
+
+
+def _set_session_cookie(response, token: str) -> None:
+    response.set_cookie(
+        SESSION_COOKIE, token, max_age=int(SESSION_LIFETIME.total_seconds()), path="/",
+        secure=True, httponly=True, samesite="lax",
+    )
+
+
+def _signed_in(dependencies: APIDependencies, session, account=None) -> "SignedIn":
+    if account is None:
+        account = dependencies.auth.account(session.account_id)
+    return SignedIn(
+        email=account.email,
+        tenant_id=session.tenant_id,
+        tenant_name=dependencies.tenant_name(session.tenant_id),
+        method=session.method,
+        csrf_token=session.csrf_token,
+        expires_at=session.expires_at,
+    )
 
 
 def _require_keywords(dependencies: APIDependencies):

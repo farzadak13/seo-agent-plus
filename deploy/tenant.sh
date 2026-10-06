@@ -30,12 +30,15 @@ for path in "$ENV_FILE" "${VENV}/bin/python" "${SRC}/app/tenants.py"; do
   fi
 done
 
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+# Only the DSN is read from the env file, and it reaches Python through the
+# environment, never as an argument: `sudo ... env NAME=value` put the
+# database password in the argv of a process that stays alive for the whole
+# run, readable by any local user through `ps`. runuser passes the
+# environment on unchanged and needs no sudo rules.
+SEO_AGENT_DATABASE_DSN="$(sed -n 's/^SEO_AGENT_DATABASE_DSN=//p' "$ENV_FILE" | head -n1)"
+SEO_AGENT_DATABASE_DSN="${SEO_AGENT_DATABASE_DSN%\"}"; SEO_AGENT_DATABASE_DSN="${SEO_AGENT_DATABASE_DSN#\"}"
+[[ -n "$SEO_AGENT_DATABASE_DSN" ]] || { echo "SEO_AGENT_DATABASE_DSN is not in $ENV_FILE." >&2; exit 1; }
+export SEO_AGENT_DATABASE_DSN
 
 cd "$SRC"
-exec sudo -u "$APP_USER" \
-  env SEO_AGENT_DATABASE_DSN="$SEO_AGENT_DATABASE_DSN" \
-  "${VENV}/bin/python" -m app.tenants "$@"
+exec runuser -u "$APP_USER" -- "${VENV}/bin/python" -m app.tenants "$@"
