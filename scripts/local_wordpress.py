@@ -104,15 +104,20 @@ def up() -> None:
     if not password or any(character.isspace() for character in password):
         sys.exit("WP-CLI did not return a bare application password; nothing was written.")
 
-    page_id = wp("post", "list", "--post_type=page", f"--name={PAGE_SLUG}", "--field=ID")
-    if not page_id:
-        page_id = wp(
-            "post", "create", "--post_type=page", "--post_status=publish",
-            "--post_title=Mens shoes", f"--post_name={PAGE_SLUG}", "--porcelain",
-        )
+    page_ids = wp("post", "list", "--post_type=page", f"--name={PAGE_SLUG}", "--field=ID").split()
+    if not page_ids:
+        page_ids = [
+            wp(
+                "post", "create", "--post_type=page", "--post_status=publish",
+                "--post_title=Mens shoes", f"--post_name={PAGE_SLUG}", "--porcelain",
+            )
+        ]
     # A test that stopped between writing and undoing leaves an override on
-    # the page; every later run would then start from the wrong title.
-    wp("post", "meta", "delete", page_id, "_hoshyarseo_title", check=False)
+    # the page; every later run would then start from the wrong title. The
+    # history goes with it, so the plugin's record matches the page again.
+    for page_id in page_ids:
+        for key in ("_hoshyarseo_title", "_hoshyarseo_title_history"):
+            wp("post", "meta", "delete", page_id, key, check=False)
 
     with open(ENV_FILE, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(

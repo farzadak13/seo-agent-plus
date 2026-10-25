@@ -77,11 +77,16 @@ def test_invalid_transition_is_rejected():
         )
 
 
-def test_terminal_success_state_has_no_transition():
+def test_a_succeeded_action_cannot_run_again():
     assert not can_transition(
         ActionStatus.SUCCEEDED,
         ActionStatus.EXECUTING,
     )
+
+
+@pytest.mark.parametrize("settled", [ActionStatus.SUCCEEDED, ActionStatus.INCONCLUSIVE])
+def test_a_settled_change_can_still_be_rolled_back(settled):
+    assert can_transition(settled, ActionStatus.ROLLED_BACK)
 
 
 def test_terminal_rejected_state_has_no_transition():

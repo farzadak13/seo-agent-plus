@@ -12,6 +12,12 @@ class OutcomeStatus(StrEnum):
     INCONCLUSIVE = "inconclusive"
 
 
+# INCONCLUSIVE with full data: the change was measured and was too small to
+# call either way (OutcomeEvaluationPolicy.inconclusive_within_band). The
+# outcome engine gives it; learning counts it as a measured sample.
+NOISE_BAND_REASON = "primary_metric_change_within_noise_band"
+
+
 class OutcomeMetric(StrEnum):
     CTR = "ctr"
     POSITION = "position"

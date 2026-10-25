@@ -258,6 +258,45 @@ def test_a_disconnected_site_is_measured_from_the_property_its_newest_days_came_
     assert w.actions.get(ACTION_ID).history[-2].detail["data_complete"] is True
 
 
+def test_a_change_in_the_noise_band_still_teaches_its_measured_change():
+    # +8% is too small to call a success, but it was measured in full: it
+    # belongs in the average, or the average is built from the tails alone.
+    w = world(FakeWarehouse(daily(before=50, after=54, impressions=1000)))
+    w.runner.run_round()
+
+    [feedback] = w.feedback.list_for_tenant(TENANT)
+    assert feedback.evidence["within_noise_band"] is True
+    performance = w.feedback.learning_context(TENANT).performances[0]
+    assert (performance.usable_sample_size, performance.inconclusive_count) == (1, 1)
+    assert performance.success_rate == 0.0
+    assert performance.average_relative_change == 0.08
+
+
+def test_a_change_settled_as_succeeded_can_still_be_undone():
+    w = world(FakeWarehouse(daily(5, 7)))
+    w.runner.run_round()
+    assert w.actions.get(ACTION_ID).status == ActionStatus.SUCCEEDED
+
+    check_rollback(w.actions.get(ACTION_ID))
+    w.rollback({"action_id": ACTION_ID})
+
+    assert w.actions.get(ACTION_ID).status == ActionStatus.ROLLED_BACK
+    assert len(w.feedback.list_for_tenant(TENANT)) == 1, "what was measured stays learned"
+
+
+def test_a_disconnected_site_follows_the_property_of_its_newest_stored_day():
+    # Stored first from the URL-prefix property, the newest days from the
+    # domain property: the domain property is what the site last read.
+    old = {day: "https://example.com/" for day in days(*BASELINE)}
+    w = world(FakeWarehouse(daily(5, 7), properties=old), now=AFTER_DEADLINE)
+
+    w.runner.run_round()
+
+    measured = w.actions.get(ACTION_ID).history[-2].detail
+    assert measured["current"]["completeness"] == 1.0
+    assert measured["baseline"]["completeness"] == 0.0, "the old property's days are another source"
+
+
 def test_it_waits_until_the_second_window_is_final():
     w = world(FakeWarehouse(daily(5, 7)), now=datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc))
 

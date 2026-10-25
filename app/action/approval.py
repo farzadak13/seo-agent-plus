@@ -15,9 +15,10 @@ from app.models.managed_action import ActionEvent, ManagedAction
 SYSTEM_ACTOR = "system"
 MAX_TITLE_LENGTH = 300
 
-# A change that has reached the site can be undone until its outcome is
-# settled. After SUCCEEDED or INCONCLUSIVE it is history, and undoing it is a
-# new decision rather than a rollback.
+# A change that has reached the site can be undone, before its outcome is
+# settled and after. Stage 39 settles most changes about five weeks after
+# they are made, and a measured change is still the customer's to take back;
+# what was measured stays in the learning, since it did happen.
 ROLLBACKABLE_STATUSES = frozenset(
     {
         ActionStatus.EXECUTED,
@@ -25,6 +26,8 @@ ROLLBACKABLE_STATUSES = frozenset(
         ActionStatus.MEASUREMENT_WINDOW_ACTIVE,
         ActionStatus.EVALUATING,
         ActionStatus.FAILED,
+        ActionStatus.SUCCEEDED,
+        ActionStatus.INCONCLUSIVE,
     }
 )
 

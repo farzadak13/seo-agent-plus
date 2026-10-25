@@ -67,7 +67,8 @@ ROUND_INTERVAL_SECONDS = 3600.0
 
 OUTCOME_AGGREGATE_TYPE = "action_outcome"
 OUTCOME_SCHEMA_VERSION = 1
-CONFIG_VERSION = "measurement-stage39-v1"
+# v2: a change inside the noise band is INCONCLUSIVE, no longer FAILED.
+CONFIG_VERSION = "measurement-stage39-v2"
 
 # A new title is for the click: CTR is what it can move. 10% either way is
 # well outside a month's ordinary noise on a query with steady impressions,
@@ -95,10 +96,10 @@ def rollback_pending(managed: ManagedAction) -> bool:
     """The customer asked to undo the change and the job has not finished.
 
     The request only adds a history entry; the status stays the same until
-    the job is done. Settling in between would make the action SUCCEEDED or
-    INCONCLUSIVE, which cannot be rolled back, under the job's feet: either
-    the job is then refused, or it has already restored the site and loses
-    the write that records it.
+    the job is done. Settling in between would record what a change the
+    customer is taking back taught as if it had stayed, and a job that has
+    already restored the site would lose its write to the settlement and go
+    round again.
     """
     for event in reversed(managed.history):
         if event.reason == "rollback_requested":

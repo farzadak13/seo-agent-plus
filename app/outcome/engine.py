@@ -2,6 +2,7 @@ from collections.abc import Iterable
 
 from app.models.measurement import MeasurementMetric, MeasurementResult
 from app.models.outcomes import (
+    NOISE_BAND_REASON,
     MetricOutcome,
     OutcomeEvaluationPolicy,
     OutcomeEvaluationResult,
@@ -120,7 +121,7 @@ def evaluate_outcome(
             reasons.append("primary_metric_met_improvement_threshold")
             status = OutcomeStatus.SUCCESS
         elif policy.inconclusive_within_band:
-            reasons.append("primary_metric_change_within_noise_band")
+            reasons.append(NOISE_BAND_REASON)
             status = OutcomeStatus.INCONCLUSIVE
         else:
             reasons.append("primary_metric_did_not_meet_improvement_threshold")

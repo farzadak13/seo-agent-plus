@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+import warnings
 
 import pytest
 
@@ -174,14 +175,19 @@ def _undo_if_left_applied(adapter, managed) -> None:
     for every later run; undo through the plugin's own history."""
     if managed.applied is None or managed.rolled_back is not None or not managed.applied.change_id:
         return
-    adapter.rollback_change(
-        request=AdapterRollbackRequest(
-            site_id=managed.site_id,
-            normalized_url=managed.action.normalized_url,
-            change_id=managed.applied.change_id,
-            idempotency_key=f"cleanup:{managed.action_id}",
+    # A cleanup that fails must not take the place of the failure that made it
+    # necessary; `up` clears a left-over override in any case.
+    try:
+        adapter.rollback_change(
+            request=AdapterRollbackRequest(
+                site_id=managed.site_id,
+                normalized_url=managed.action.normalized_url,
+                change_id=managed.applied.change_id,
+                idempotency_key=f"cleanup:{managed.action_id}",
+            )
         )
-    )
+    except Exception as exc:  # noqa: BLE001
+        warnings.warn(f"Could not undo the test's title change: {exc}", stacklevel=2)
 
 
 def test_a_proposal_for_a_title_the_page_no_longer_has_is_not_written():

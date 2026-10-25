@@ -48,8 +48,14 @@ ALLOWED_TRANSITIONS: dict[
     ActionStatus.FAILED: {
         ActionStatus.ROLLED_BACK,
     },
-    ActionStatus.SUCCEEDED: set(),
-    ActionStatus.INCONCLUSIVE: set(),
+    # A verdict on a change does not take it out of the customer's hands. The
+    # site still refuses an exact undo once a later change has replaced it.
+    ActionStatus.SUCCEEDED: {
+        ActionStatus.ROLLED_BACK,
+    },
+    ActionStatus.INCONCLUSIVE: {
+        ActionStatus.ROLLED_BACK,
+    },
     ActionStatus.ROLLED_BACK: set(),
     ActionStatus.REJECTED: set(),
 }

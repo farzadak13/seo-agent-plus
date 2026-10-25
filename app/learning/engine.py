@@ -10,7 +10,7 @@ from app.models.learning import (
     LearningSignal,
     StrategyPerformance,
 )
-from app.models.outcomes import OutcomeEvaluationResult, OutcomeMetric, OutcomeStatus
+from app.models.outcomes import NOISE_BAND_REASON, OutcomeEvaluationResult, OutcomeMetric, OutcomeStatus
 
 
 def build_feedback_event(
@@ -56,8 +56,21 @@ def build_feedback_event(
             "outcome_status": outcome.status.value,
             "measurement_id": outcome.measurement.measurement_id,
             "learning_safe": True,
+            "within_noise_band": NOISE_BAND_REASON in outcome.reasons,
         },
     )
+
+
+def _measured(event: FeedbackEvent) -> bool:
+    """A sample whose change was measured: a verdict, or a change too small for one.
+
+    An INCONCLUSIVE inside the noise band had full data and a real relative
+    change. Leaving it out would build the average from the two tails alone:
+    five +12% changes and twenty +2% ones would read as "+12%, positive".
+    """
+    if event.outcome_status in {OutcomeStatus.SUCCESS, OutcomeStatus.FAILURE}:
+        return True
+    return event.outcome_status == OutcomeStatus.INCONCLUSIVE and event.evidence.get("within_noise_band") is True
 
 
 def _group_key(feedback: FeedbackEvent) -> tuple[str, str, str]:
@@ -88,26 +101,16 @@ def _build_performance(
         if event.outcome_status == OutcomeStatus.INCONCLUSIVE
     )
 
-    usable = successes + failures
+    measured = [event for event in ordered if _measured(event)]
+    usable = len(measured)
     relative_changes = [
         event.relative_change
-        for event in ordered
-        if event.outcome_status in {OutcomeStatus.SUCCESS, OutcomeStatus.FAILURE}
-        and event.relative_change is not None
+        for event in measured
+        if event.relative_change is not None
     ]
 
-    improvement_events = [
-        event
-        for event in ordered
-        if event.improved is True
-        and event.outcome_status in {OutcomeStatus.SUCCESS, OutcomeStatus.FAILURE}
-    ]
-    regression_events = [
-        event
-        for event in ordered
-        if event.regressed is True
-        and event.outcome_status in {OutcomeStatus.SUCCESS, OutcomeStatus.FAILURE}
-    ]
+    improvement_events = [event for event in measured if event.improved is True]
+    regression_events = [event for event in measured if event.regressed is True]
 
     maturity = (
         LearningMaturity.ESTABLISHED
