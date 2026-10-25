@@ -93,6 +93,11 @@ class _Store:
                 continue  # someone else wrote it meanwhile; theirs is as good
 
 
+# Public name for the other paid-provider caches (app.serp.cache) that keep
+# their answers the same way.
+DocumentStore = _Store
+
+
 class RequestBudget:
     """A daily allowance of provider requests, shared by every process."""
 

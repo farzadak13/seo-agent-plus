@@ -164,6 +164,41 @@ def test_blocked_serp_never_calls_llm_and_is_persisted():
     assert TitleProposalStore(repository).get("proposal-2").run_id == "run-456"
 
 
+def test_a_serp_source_that_cannot_answer_blocks_the_proposal_instead_of_failing_the_run():
+    from app.serp.provider import SERPBudgetSpentError
+
+    repository = InMemoryRepository()
+
+    class SpentSERP(FakeSERP):
+        def search(self, *, query):
+            raise SERPBudgetSpentError("Today's budget is spent.")
+
+    workflow = TitleRecommendationWorkflow(
+        adapter_resolver=lambda site: FakeAdapter(),
+        serp_provider=SpentSERP(),
+        reasoning_router=make_router(),
+        proposal_store=TitleProposalStore(repository),
+        proposal_id_factory=lambda: "proposal-3",
+    )
+
+    strategy = make_strategy()
+    proposal = workflow.run(run_id="run-789", site=object(), strategy=strategy)
+
+    assert proposal.status == TitleProposalStatus.BLOCKED
+    assert proposal.reasoning is None
+    assert "serp_unavailable:SERPBudgetSpentError" in proposal.reasons
+    assert proposal.evidence["serp_responses"] == [{
+        "query": strategy.normalized_query, "response_id": "unavailable",
+        "fetched_at": strategy.snapshot.generated_at.isoformat(),
+    }]
+
+
+def test_a_proposal_records_which_serp_answer_it_was_made_on():
+    proposal = make_workflow(InMemoryRepository()).run(run_id="run-1", site=object(), strategy=make_strategy())
+    [response] = proposal.evidence["serp_responses"]
+    assert response["response_id"] and response["fetched_at"]
+
+
 class FailingReasoner:
     provider_id = "fake-llm-failing"
     model = "test-model"

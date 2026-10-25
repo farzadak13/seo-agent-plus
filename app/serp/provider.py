@@ -5,6 +5,16 @@ from typing import Protocol, runtime_checkable
 from app.models.serp import SERPQuerySnapshot
 
 
+class SERPProviderError(RuntimeError):
+    """A SERP source could not answer: refused, out of credits, rate-limited,
+    out of today's budget, or unreachable. The title path records it and
+    blocks the proposal; it does not fail the run."""
+
+
+class SERPBudgetSpentError(SERPProviderError):
+    """Today's request budget is spent and there is no recent enough answer."""
+
+
 @runtime_checkable
 class SERPProvider(Protocol):
     """Provider-neutral contract for one SERP query snapshot."""

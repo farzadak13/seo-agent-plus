@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from app.execution.site_adapter import SiteAdapter
@@ -13,9 +14,11 @@ from app.persistence.serialization import build_record
 from app.reasoning.router import ReasoningRouter
 from app.serp.decision import build_serp_decision
 from app.serp.engine import build_serp_investigation
-from app.serp.provider import SERPProvider
+from app.serp.provider import SERPProvider, SERPProviderError
 from app.title.engine import build_title_recommendation
 
+
+log = logging.getLogger(__name__)
 
 TITLE_PROPOSAL_AGGREGATE_TYPE = "title_proposal"
 TITLE_PROPOSAL_SCHEMA_VERSION = 1
@@ -105,9 +108,40 @@ class TitleRecommendationWorkflow:
         )
 
         primary_queries = [strategy.normalized_query]
-        snapshots: list[SERPQuerySnapshot] = [
-            self._serp_provider.search(query=strategy.normalized_query)
-        ]
+        serp_reasons: list[str] = []
+        try:
+            snapshot = self._serp_provider.search(query=strategy.normalized_query)
+        except SERPProviderError as exc:
+            # The run carries on, so say it where the operator looks: a wrong
+            # key or spent credits blocks every proposal until someone acts.
+            log.warning(
+                "title path: SERP source %s could not answer (%s); proposal blocked",
+                self._serp_provider.provider_id, type(exc).__name__,
+            )
+            # No results to compare against is a blocked proposal, not a
+            # failed run: the run's analysis stands, and retrying the job would
+            # only fetch Search Console again and spend another request.
+            # Dated by the strategy, so the record does not depend on when
+            # the provider happened to be down.
+            snapshot = SERPQuerySnapshot(
+                query=strategy.normalized_query,
+                provider=self._serp_provider.provider_id,
+                response_id="unavailable",
+                fetched_at=strategy.snapshot.generated_at,
+                results=[],
+            )
+            serp_reasons.append(f"serp_unavailable:{type(exc).__name__}")
+        snapshots: list[SERPQuerySnapshot] = [snapshot]
+        # Which answer the decision was made on, so it can be found again
+        # after the cache has moved on.
+        serp_evidence = {
+            "serp_provider": self._serp_provider.provider_id,
+            "serp_responses": [
+                {"query": item.query, "response_id": item.response_id,
+                 "fetched_at": item.fetched_at.isoformat()}
+                for item in snapshots
+            ],
+        }
 
         investigation = build_serp_investigation(
             strategy=strategy,
@@ -142,8 +176,8 @@ class TitleRecommendationWorkflow:
                 reasoning=None,
                 selected_title=None,
                 provider_id=None,
-                reasons=["serp_decision_not_pass", *decision.reasons],
-                evidence={"serp_provider": self._serp_provider.provider_id},
+                reasons=["serp_decision_not_pass", *serp_reasons, *decision.reasons],
+                evidence=serp_evidence,
                 snapshot=decision.snapshot,
             )
             return self._proposal_store.create(proposal)
@@ -176,7 +210,7 @@ class TitleRecommendationWorkflow:
                 provider_id=orchestration.provider_id,
                 reasons=[*orchestration.reasons],
                 evidence={
-                    "serp_provider": self._serp_provider.provider_id,
+                    **serp_evidence,
                     "reasoning_status": orchestration.status.value,
                 },
                 snapshot=decision.snapshot,
@@ -210,7 +244,7 @@ class TitleRecommendationWorkflow:
                 *orchestration.reasons,
             ],
             evidence={
-                "serp_provider": self._serp_provider.provider_id,
+                **serp_evidence,
                 "selected_candidate_id": selected.candidate_id,
                 "adapter_id": adapter.adapter_id,
                 "page_metadata": dict(page.metadata),

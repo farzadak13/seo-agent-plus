@@ -23,7 +23,9 @@ def build_title_workflow(config, *, repository, adapter_factory, secret_resolver
 
     return TitleRecommendationWorkflow(
         adapter_resolver=adapter_factory.build,
-        serp_provider=build_serp_provider(config),
+        serp_provider=build_serp_provider(
+            config, repository=repository, secret_resolver=secret_resolver
+        ),
         reasoning_router=build_reasoning_router(config, secret_resolver=secret_resolver),
         proposal_store=TitleProposalStore(repository),
     )

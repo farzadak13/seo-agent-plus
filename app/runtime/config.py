@@ -48,8 +48,15 @@ class RuntimeConfig(BaseModel):
 
     # Stage 36 — title recommendation path.
     title_workflow_enabled: bool = False
-    serp_mode: str = Field(default="none", pattern=r"^(none|static)$")
+    serp_mode: str = Field(default="none", pattern=r"^(none|static|serper|dataforseo)$")
     serp_static_path: str | None = None
+    # Live SERP APIs (app.serp.live). The NAME of the environment variable
+    # holding the key — for DataForSEO, "login:password" — not the key itself.
+    serp_api_key_ref: str | None = Field(default=None, repr=False)
+    serp_country: str = Field(default="ir", pattern=r"^[a-z]{2}$")
+    serp_language: str = Field(default="fa", pattern=r"^[a-z]{2}$")
+    # Paid requests a day for the whole service; each query is cached a week.
+    serp_daily_budget: int = Field(default=200, ge=0, le=100_000)
     llm_mode: str = Field(default="none", pattern=r"^(none|arvan)$")
     llm_timeout_seconds: float = Field(default=60.0, gt=0)
     reasoning_config_version: str = Field(default="runtime-stage36-v1", min_length=1)
@@ -166,6 +173,10 @@ class RuntimeConfig(BaseModel):
             raise ValueError(
                 "SEO_AGENT_SERP_STATIC_PATH is required when SEO_AGENT_SERP_MODE is 'static'."
             )
+        if self.serp_mode in {"serper", "dataforseo"} and not self.serp_api_key_ref:
+            raise ValueError(
+                f"SEO_AGENT_SERP_API_KEY_REF is required when SEO_AGENT_SERP_MODE is '{self.serp_mode}'."
+            )
         if self.llm_mode == "arvan":
             missing = [
                 name
@@ -216,6 +227,10 @@ class RuntimeConfig(BaseModel):
             title_workflow_enabled=_env_bool("SEO_AGENT_TITLE_WORKFLOW_ENABLED", False),
             serp_mode=os.getenv("SEO_AGENT_SERP_MODE", "none").strip().lower() or "none",
             serp_static_path=_env_optional("SEO_AGENT_SERP_STATIC_PATH"),
+            serp_api_key_ref=_env_optional("SEO_AGENT_SERP_API_KEY_REF"),
+            serp_country=os.getenv("SEO_AGENT_SERP_COUNTRY", "ir").strip().lower() or "ir",
+            serp_language=os.getenv("SEO_AGENT_SERP_LANGUAGE", "fa").strip().lower() or "fa",
+            serp_daily_budget=int(os.getenv("SEO_AGENT_SERP_DAILY_BUDGET", "200")),
             llm_mode=os.getenv("SEO_AGENT_LLM_MODE", "none").strip().lower() or "none",
             llm_timeout_seconds=float(os.getenv("SEO_AGENT_LLM_TIMEOUT_SECONDS", "60")),
             reasoning_config_version=(
