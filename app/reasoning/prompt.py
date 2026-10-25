@@ -1,6 +1,8 @@
 from app.models.reasoning import TitleReasoningInput
 from app.models.llm import LLMMessage
-PROMPT_VERSION = "title-reasoning-v1"
+# v2: exactly three distinct candidates, so the customer has a real choice.
+PROMPT_VERSION = "title-reasoning-v2"
+CANDIDATE_COUNT = 3
 
 SYSTEM_PROMPT = """
 You are a strategic SEO reasoning component.
@@ -51,6 +53,9 @@ Current title length gap vs competitors:
 
 Constraints:
 {chr(10).join(f"- {item}" for item in reasoning_input.constraints)}
+
+Give exactly {CANDIDATE_COUNT} candidates, clearly different from each other in
+wording or angle, the strongest first.
 
 Return JSON with exactly this structure:
 

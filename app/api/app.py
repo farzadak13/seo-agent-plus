@@ -44,6 +44,8 @@ from app.api.schemas import (
     SiteResponse,
 )
 from app.jobs.scheduler import JobScheduler
+from app.activity import ActivityItem, build_activity
+from app.models.actions import ActionStatus
 from app.models.jobs import Job
 from app.models.runs import SEORun
 from app.models.sites import (
@@ -624,6 +626,41 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             site_id=site_id, property_url=site.gsc.property_url, window=window, entries=entries
         )
 
+    @app.get("/v1/sites/{site_id}/activity", response_model=list[ActivityItem])
+    def site_activity(
+        site_id: str,
+        limit: int = 50,
+        days: int = 30,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> list[ActivityItem]:
+        """What the service did on this site and what was decided, newest first."""
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, authenticated_principal_id)
+        limit = max(1, min(limit, 200))
+        since = dependencies.clock() - timedelta(days=max(1, min(days, 365)))
+        actions = []
+        if dependencies.action_store is not None:
+            cursor = None
+            while len(actions) < 500:
+                page, cursor = dependencies.action_store.query(
+                    tenant_id=authenticated_principal_id, site_id=site_id, limit=200, cursor=cursor
+                )
+                actions.extend(page)
+                if cursor is None:
+                    break
+        entries = []
+        if dependencies.warehouse is not None:
+            window = sync_window(dependencies.clock())
+            entries = [
+                entry
+                for entry in dependencies.warehouse.ledger(site_id=site_id, start=window[0], end=window[1])
+                if entry.fetched_at >= since
+            ]
+        return [
+            item for item in build_activity(actions=actions, sync_entries=entries, limit=limit)
+            if item.at >= since
+        ]
+
     # The dashboard's reads. All from the warehouse, none from Google.
 
     @app.get("/v1/sites/{site_id}/performance", response_model=PerformanceReport)
@@ -1005,6 +1042,40 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         job = _action_job(dependencies, EXECUTE_ACTION_JOB_TYPE, approved, authenticated_principal_id)
         _save_with_job(dependencies, approved, job)
         return ActionResponse.from_managed(approved, job_id=job.job_id)
+
+    @app.post(
+        "/v1/actions/{action_id}/applied",
+        response_model=ActionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    def report_applied(
+        action_id: str,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> ActionResponse:
+        """A site connected as ``manual``: the customer says the approved title is in place.
+
+        Queues a check of the public page; the action moves on only once the
+        page shows the title. Saying it early costs nothing but another check.
+        """
+        managed = _get_action(dependencies, action_id)
+        _ensure_owner(managed.tenant_id, authenticated_principal_id)
+        site = _get_site(dependencies, managed.site_id)
+        if site.site_adapter is None or site.site_adapter.adapter_type != "manual":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="This site applies changes itself; there is nothing to report.",
+            )
+        if managed.status != ActionStatus.APPROVED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"An action in status {managed.status.value} is not waiting to be applied.",
+            )
+        reported = managed.record(
+            action=managed.action, actor=authenticated_principal_id, reason="customer_reported_applied"
+        )
+        job = _action_job(dependencies, EXECUTE_ACTION_JOB_TYPE, reported, authenticated_principal_id)
+        _save_with_job(dependencies, reported, job)
+        return ActionResponse.from_managed(reported, job_id=job.job_id)
 
     @app.post("/v1/actions/{action_id}/reject", response_model=ActionResponse)
     def reject_action(

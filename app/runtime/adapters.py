@@ -4,6 +4,7 @@ from app.models.rest_adapter import RESTAdapterConfig
 from app.models.wordpress_adapter import WordPressAdapterConfig
 from app.site_adapters.generic_rest import GenericRESTSiteAdapter
 from app.site_adapters.hoshyarseo import HoshyarConnectorAdapter, HoshyarConnectorConfig
+from app.site_adapters.manual import ManualAdapterConfig, ManualSiteAdapter
 from app.site_adapters.wordpress import WordPressSiteAdapter
 
 
@@ -38,6 +39,9 @@ class SiteAdapterFactory:
         # Google shows, not the post's H1. The one to use for customers.
         self.register("hoshyarseo", HoshyarConnectorConfig, HoshyarConnectorAdapter,
                       secret_fields={"username", "application_password"})
+        # Any other site: the customer applies the approved title and the
+        # service checks the public page. Reads only; no credentials.
+        self.register("manual", ManualAdapterConfig, ManualSiteAdapter)
 
     def register(self, adapter_type, config_model, builder, *, secret_fields=()):
         if adapter_type in self._builders:

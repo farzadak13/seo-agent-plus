@@ -45,13 +45,23 @@ def propose_title_change(
     proposed_title: str,
     current_title: str | None,
     provider_id: str | None = None,
+    alternatives: list[str] | None = None,
 ) -> ManagedAction:
-    """Turn the engine's title action and the LLM's proposal into a pending decision."""
+    """Turn the engine's title action and the LLM's proposal into a pending decision.
+
+    ``alternatives`` are the model's other candidates, offered beside the
+    proposal; choosing one is an approval with that title.
+    """
     if action.action_type != ActionType.OPTIMIZE_TITLE:
         raise ApprovalError(
             f"A title proposal needs an optimize_title action, got {action.action_type.value}."
         )
     title = _clean_title(proposed_title)
+    others: list[str] = []
+    for candidate in alternatives or []:
+        cleaned = " ".join(str(candidate).split())
+        if cleaned and cleaned != title and cleaned not in others and len(cleaned) <= MAX_TITLE_LENGTH:
+            others.append(cleaned)
 
     # The id comes from the run, not the candidate: the same candidate is
     # proposed again by every later run, and each proposal is its own decision.
@@ -65,6 +75,7 @@ def propose_title_change(
                 "recommended_title": title,
                 "expected_title": title,
                 "proposal_id": proposal_id,
+                "alternative_titles": others,
             },
         }
     )
@@ -101,15 +112,18 @@ def approve(
     if title is not None:
         edited = _clean_title(title)
         if edited != action.parameters.get("recommended_title"):
+            # One of the model's own other candidates is a choice, not an edit.
+            chosen = edited in (action.parameters.get("alternative_titles") or [])
             detail["proposed_title"] = action.parameters.get("recommended_title")
-            detail["edited_title"] = edited
+            detail["chosen_alternative" if chosen else "edited_title"] = edited
             action = action.model_copy(
                 update={
                     "parameters": {
                         **action.parameters,
                         "recommended_title": edited,
                         "expected_title": edited,
-                        "edited_by_reviewer": True,
+                        "edited_by_reviewer": not chosen,
+                        "chosen_alternative": chosen,
                     }
                 }
             )

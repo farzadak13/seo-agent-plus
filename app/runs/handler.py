@@ -129,6 +129,10 @@ def _queue_for_approval(*, action_store, run, action, proposal):
         proposed_title=proposal.selected_title,
         current_title=proposal.investigation.target_title,
         provider_id=proposal.provider_id,
+        alternatives=[
+            candidate.title
+            for candidate in getattr(getattr(proposal, "reasoning", None), "candidates", None) or []
+        ],
     )
     existing = action_store.find(managed.action_id)
     if existing is not None:

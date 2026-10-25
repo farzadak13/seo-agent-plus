@@ -47,16 +47,27 @@ def build_execute_action_handler(
     def handler(payload: dict[str, Any]) -> dict[str, Any]:
         action_id = str(payload["action_id"])
         managed = action_store.get(action_id)
-        if managed.status == ActionStatus.APPROVED:
-            managed = action_store.update(
-                _move(managed, ActionStatus.EXECUTING, "execution_started")
-            )
-        if managed.status not in {ActionStatus.EXECUTING, ActionStatus.EXECUTED}:
+        if managed.status not in {ActionStatus.APPROVED, ActionStatus.EXECUTING, ActionStatus.EXECUTED}:
             # Already finished, or rejected before the job ran.
             return _summary(managed, skipped=True)
 
         try:
+            # Building the adapter touches nothing on the site.
             adapter = adapter_factory.build(site_store.get(managed.site_id))
+            if getattr(adapter, "manual_apply", False):
+                if managed.status != ActionStatus.APPROVED:
+                    return _summary(managed, skipped=True)
+                return _summary(_check_applied_by_customer(managed, adapter, action_store))
+        except Exception as exc:
+            _note_error(action_store, action_id, "execution_error", exc)
+            raise
+
+        if managed.status == ActionStatus.APPROVED:
+            managed = action_store.update(
+                _move(managed, ActionStatus.EXECUTING, "execution_started")
+            )
+
+        try:
             if managed.status == ActionStatus.EXECUTED:
                 # Recorded as written, then interrupted before the check.
                 return _summary(action_store.update(_verify(managed, adapter)))
@@ -142,6 +153,72 @@ def _carry_out(managed: ManagedAction, adapter, action_store: ManagedActionStore
     return action_store.update(_verify(managed, adapter))
 
 
+def _check_applied_by_customer(managed: ManagedAction, adapter, action_store: ManagedActionStore) -> ManagedAction:
+    """A manual site: the customer puts the title in place; this sees whether they have.
+
+    Until the public page shows the approved title the action stays APPROVED,
+    with the title to apply in its history for the dashboard to show. Each
+    "I've applied it" from the customer runs this again.
+    """
+    target = managed.action.parameters["recommended_title"]
+    page = _read(adapter, managed)
+    if _norm(page.title) != _norm(target):
+        return action_store.update(
+            managed.record(
+                action=managed.action,
+                actor=SYSTEM_ACTOR,
+                reason="waiting_for_customer_to_apply",
+                detail={"apply_title": target, "found": page.title},
+                error=None,
+            )
+        )
+    managed = action_store.update(_move(managed, ActionStatus.EXECUTING, "execution_started"))
+    managed = action_store.update(
+        _move(
+            managed,
+            ActionStatus.EXECUTED,
+            "applied_by_customer",
+            detail={"adapter_id": adapter.adapter_id},
+            applied=AppliedChange(
+                adapter_id=adapter.adapter_id,
+                change_id=None,
+                previous_value=managed.observed_value or "",
+                new_value=target,
+            ),
+            error=None,
+        )
+    )
+    return action_store.update(_verify(managed, adapter))
+
+
+def _rollback_by_customer(managed: ManagedAction, adapter, actor: str, action_store: ManagedActionStore) -> ManagedAction:
+    """A manual site: the customer restores the old title; this sees whether they have."""
+    applied = managed.applied
+    if not applied.previous_value.strip():
+        # The page's title before the change was never known, so there is
+        # nothing to ask the customer to restore or to recognise afterwards.
+        return action_store.update(
+            managed.record(
+                action=managed.action,
+                actor=actor,
+                reason="rollback_refused",
+                error="The title before this change is not known; restore it by hand on your site.",
+            )
+        )
+    page = _read(adapter, managed)
+    if _norm(page.title) == _norm(applied.previous_value):
+        return action_store.update(_rolled_back(managed, adapter, actor, "restored_by_customer"))
+    return action_store.update(
+        managed.record(
+            action=managed.action,
+            actor=actor,
+            reason="waiting_for_customer_to_restore",
+            detail={"restore_title": applied.previous_value, "found": page.title},
+            error=None,
+        )
+    )
+
+
 def build_rollback_action_handler(
     *,
     action_store: ManagedActionStore,
@@ -157,6 +234,8 @@ def build_rollback_action_handler(
         try:
             check_rollback(managed)
             adapter = adapter_factory.build(site_store.get(managed.site_id))
+            if getattr(adapter, "manual_apply", False):
+                return _summary(_rollback_by_customer(managed, adapter, actor, action_store))
             if getattr(adapter, "exact_rollback", False) and managed.applied.change_id:
                 return _summary(_rollback_exactly(managed, adapter, actor, action_store))
             return _summary(_rollback_by_rewriting(managed, adapter, actor, action_store))

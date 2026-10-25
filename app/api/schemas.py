@@ -246,6 +246,9 @@ class ActionResponse(BaseModel):
     normalized_query: str
     current_title: str | None
     proposed_title: str | None
+    # The model's other candidates; approving with one of them as ``title``
+    # chooses it instead.
+    alternative_titles: list[str]
     edited_by_reviewer: bool
     applied: AppliedChangeResponse | None
     rolled_back: AppliedChangeResponse | None
@@ -269,6 +272,7 @@ class ActionResponse(BaseModel):
             normalized_query=action.normalized_query,
             current_title=managed.observed_value,
             proposed_title=action.parameters.get("recommended_title"),
+            alternative_titles=list(action.parameters.get("alternative_titles") or []),
             edited_by_reviewer=bool(action.parameters.get("edited_by_reviewer")),
             applied=managed.applied.model_dump() if managed.applied else None,
             rolled_back=managed.rolled_back.model_dump() if managed.rolled_back else None,
