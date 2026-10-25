@@ -182,6 +182,36 @@ class PostgresWarehouse:
             )
             return {device: (clicks, impressions, position_sum) for device, clicks, impressions, position_sum in cursor.fetchall()}
 
+    def query_days(
+        self, *, site_id: str, url: str, query: str, start: date, end: date
+    ) -> dict[date, tuple[int, int, float]]:
+        """{day: (clicks, impressions, position_sum)} of one page and query, devices summed."""
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT q.day, sum(q.clicks), sum(q.impressions), sum(q.position_sum)"
+                " FROM gsc_daily_queries q"
+                " JOIN gsc_pages p ON p.page_id = q.page_id"
+                " JOIN gsc_queries g ON g.query_id = q.query_id"
+                " WHERE q.site_id = %s AND p.url = %s AND g.query = %s AND q.day BETWEEN %s AND %s"
+                " GROUP BY q.day",
+                (site_id, url, query, start, end),
+            )
+            return {
+                day: (int(clicks), int(impressions), float(position_sum))
+                for day, clicks, impressions, position_sum in cursor.fetchall()
+            }
+
+    def page_days(self, *, site_id: str, url: str, start: date, end: date) -> set[date]:
+        """Days on which the page had any impression at all, on any query."""
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT d.day FROM gsc_daily_pages d JOIN gsc_pages p ON p.page_id = d.page_id"
+                " WHERE d.site_id = %s AND p.url = %s AND d.day BETWEEN %s AND %s"
+                " GROUP BY d.day HAVING sum(d.impressions) > 0",
+                (site_id, url, start, end),
+            )
+            return {row[0] for row in cursor.fetchall()}
+
     def sync_status(self, *, site_id: str, day: date) -> SyncDayStatus | None:
         with self._transaction() as cursor:
             cursor.execute(

@@ -72,6 +72,14 @@ class RuntimeConfig(BaseModel):
     # it needs live Search Console and runs only in the worker process.
     warehouse_sync_enabled: bool = False
 
+    # Stage 39 — measuring a change. Days of Search Console data compared on
+    # each side of it, days left out after it while Google recrawls, and how
+    # long to wait for missing days before measuring with what there is. It
+    # reads the warehouse, so it runs only when the warehouse does.
+    measurement_window_days: int = Field(default=28, ge=7, le=90)
+    measurement_settle_days: int = Field(default=7, ge=0, le=60)
+    measurement_deadline_days: int = Field(default=14, ge=0, le=180)
+
     @field_validator("api_key")
     @classmethod
     def valid_key(cls, value):
@@ -231,6 +239,9 @@ class RuntimeConfig(BaseModel):
             keyword_daily_budget=int(os.getenv("SEO_AGENT_KEYWORD_DAILY_BUDGET", "40")),
             keyword_tenant_daily_budget=int(os.getenv("SEO_AGENT_KEYWORD_TENANT_DAILY_BUDGET", "10")),
             warehouse_sync_enabled=_env_bool("SEO_AGENT_WAREHOUSE_SYNC_ENABLED", False),
+            measurement_window_days=int(os.getenv("SEO_AGENT_MEASUREMENT_WINDOW_DAYS", "28")),
+            measurement_settle_days=int(os.getenv("SEO_AGENT_MEASUREMENT_SETTLE_DAYS", "7")),
+            measurement_deadline_days=int(os.getenv("SEO_AGENT_MEASUREMENT_DEADLINE_DAYS", "14")),
         )
 
 

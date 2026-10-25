@@ -12,6 +12,8 @@ from app.action.store import ManagedActionStore
 from app.api.app import APIDependencies, create_app
 from app.api.auth import TenantAPIKeyAuthenticator
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
+from app.learning.store import FeedbackStore
+from app.measurement.runner import ROUND_INTERVAL_SECONDS as MEASUREMENT_INTERVAL_SECONDS, MeasurementRunner
 from app.observability import InMemoryEventSink, InMemoryMetricsSink, ObservabilityContext
 from app.onboarding.secrets import EnvironmentSecretResolver
 from app.accounts.google_login import GoogleLogin
@@ -66,6 +68,7 @@ class RuntimeContainer:
     warehouse: PostgresWarehouse | None = None
     warehouse_loop: WarehouseLoop | None = None
     purge_loop: WarehouseLoop | None = None
+    measurement_loop: WarehouseLoop | None = None
     warehouse_reports: WarehouseReports | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
@@ -79,8 +82,12 @@ class RuntimeContainer:
                 self.warehouse_loop.start()
             if self.purge_loop is not None:
                 self.purge_loop.start()
+            if self.measurement_loop is not None:
+                self.measurement_loop.start()
 
     def stop(self) -> None:
+        if self.measurement_loop is not None:
+            self.measurement_loop.stop()
         if self.purge_loop is not None:
             self.purge_loop.stop()
         if self.warehouse_loop is not None:
@@ -96,6 +103,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     tenant_store = TenantStore(repository)
     api_key_store = APIKeyStore(repository)
     action_store = ManagedActionStore(repository)
+    feedback_store = FeedbackStore(repository)
 
     keyring = Keyring.from_environment()
     vault = SecretVault(repository, keyring) if keyring is not None else None
@@ -127,6 +135,9 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             secret_resolver=secret_resolver,
             settings=config,
             transport=transport,
+            # Stage 39: what this tenant's settled actions taught, and only
+            # this tenant's, as advisory evidence for the next decision.
+            learning_provider=lambda site: feedback_store.learning_context(site.principal_id),
         )
         # Onboarding asks Google which properties a credential can see, so the
         # customer picks one instead of typing a string that has to match byte
@@ -145,6 +156,27 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     warehouse_loop = (
         WarehouseLoop(warehouse_runner, should_run=lambda: worker.running)
         if warehouse_runner is not None
+        else None
+    )
+    # Stage 39 reads what the warehouse keeps, so it exists only beside it.
+    measurement_loop = (
+        WarehouseLoop(
+            MeasurementRunner(
+                repository=repository,
+                action_store=action_store,
+                feedback_store=feedback_store,
+                warehouse=warehouse,
+                transaction=repository.transaction,
+                lag_days=config.gsc_data_lag_days,
+                window_days=config.measurement_window_days,
+                settle_days=config.measurement_settle_days,
+                deadline_days=config.measurement_deadline_days,
+            ),
+            interval_seconds=MEASUREMENT_INTERVAL_SECONDS,
+            should_run=lambda: worker.running,
+            name="measurement",
+        )
+        if warehouse is not None
         else None
     )
 
@@ -250,6 +282,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             RecordPurge(config.database_dsn), interval_seconds=PURGE_INTERVAL_SECONDS,
             should_run=lambda: worker.running, name="record-purge",
         ),
+        measurement_loop=measurement_loop,
         warehouse_reports=WarehouseReports(config.database_dsn) if warehouse is not None else None,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,

@@ -31,11 +31,15 @@ class PersistentSEORunService:
         gateway_factory=None,
         transport=None,
         today_fn=Date.today,
+        learning_provider=None,
     ):
         self.repository = repository
         self.secret_resolver = secret_resolver
         self.settings = settings
         self.today_fn = today_fn
+        # site -> LearningContext | None. Advisory only: it can reorder
+        # strategies, never change what is detected (app.learning.decision).
+        self.learning_provider = learning_provider
         self._transport = transport
         self.gateway_factory = gateway_factory or self._default_gateway
 
@@ -155,4 +159,5 @@ class PersistentSEORunService:
             current_url_metrics=current_metrics,
             snapshot=SnapshotMetadata(snapshot_id="runtime:"+identity, data_snapshot_id=bundle_id,
                 rule_version="rules-v1", config_version="runtime-stage35-v1", generated_at=current.created_at),
-            candidate_id=candidate_id, normalized_url=url, normalized_query=query)
+            candidate_id=candidate_id, normalized_url=url, normalized_query=query,
+            learning_context=self.learning_provider(site) if self.learning_provider else None)
