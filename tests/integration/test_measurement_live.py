@@ -133,7 +133,8 @@ def world():
         store_day(warehouse, day, clicks=5 if day < date(2026, 8, 1) else 8)
     feedback = FeedbackStore(repository)
     runner = MeasurementRunner(
-        repository=repository, action_store=actions, feedback_store=feedback, warehouse=warehouse,
+        repository=repository, action_store=actions, feedback_store=feedback, site_store=sites,
+        warehouse=warehouse,
         transaction=repository.transaction, clock=lambda: NOW,
     )
     return repository, actions, feedback, runner, rollback, warehouse

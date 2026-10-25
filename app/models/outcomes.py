@@ -39,6 +39,10 @@ class OutcomeEvaluationPolicy(BaseModel):
     min_relative_improvement: float = Field(ge=0)
     max_relative_regression: float = Field(ge=0)
     require_primary_metric: bool = True
+    # A change that neither reaches the improvement threshold nor passes the
+    # regression one is noise, not a verdict. Off by default: FAILURE is what
+    # the engine has always said there.
+    inconclusive_within_band: bool = False
 
 
 class OutcomeEvaluationResult(BaseModel):

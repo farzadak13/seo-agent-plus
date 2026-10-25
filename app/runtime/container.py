@@ -165,6 +165,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
                 repository=repository,
                 action_store=action_store,
                 feedback_store=feedback_store,
+                site_store=site_store,
                 warehouse=warehouse,
                 transaction=repository.transaction,
                 lag_days=config.gsc_data_lag_days,

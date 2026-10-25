@@ -13,6 +13,7 @@ from app.measurement.runner import OUTCOME_AGGREGATE_TYPE, MeasurementRunner, me
 from app.measurement.series import build_observations
 from app.models.actions import ActionStatus
 from app.models.observations import DataStatus
+from app.models.sites import GSCConnectionConfig, SecretProvider, SecretRef
 from app.onboarding.site_store import SiteStore
 from app.persistence.contracts import PersistenceConflictError
 from app.runtime.config import RuntimeConfig
@@ -51,17 +52,27 @@ def daily(before, after, impressions=100, position=5.0):
     return rows
 
 
+PROPERTY = "sc-domain:example.com"
+
+
 class FakeWarehouse:
-    def __init__(self, rows, *, stored=EVERY_DAY, capped=()):
+    def __init__(self, rows, *, stored=EVERY_DAY, capped=(), properties=None):
         self.rows = rows
         self.stored = set(stored)
         self.capped = set(capped)
+        self.properties = properties or {}  # day -> the property it was stored from
         self.on_read = None
 
     def ledger(self, *, site_id, start, end):
         return [
-            SimpleNamespace(day=day, status=SimpleNamespace(value="synced"), page_rows_capped=day in self.capped)
-            for day in sorted(self.stored)
+            SimpleNamespace(
+                day=day,
+                property_url=self.properties.get(day, PROPERTY),
+                status=SimpleNamespace(value="synced"),
+                page_rows_capped=day in self.capped,
+                fetched_at=datetime(2026, 9, 9, tzinfo=timezone.utc) + timedelta(minutes=index),
+            )
+            for index, day in enumerate(sorted(self.stored))
             if start <= day <= end
         ]
 
@@ -74,12 +85,12 @@ class FakeWarehouse:
         return {day for day in self.rows if start <= day <= end and day in self.stored}
 
 
-def world(warehouse, now=SETTLED_NOW):
+def world(warehouse, now=SETTLED_NOW, site=None):
     """One title change, applied on Aug 1 and verified, waiting to be measured."""
     repository = TransactionalFakeRepository("unused")
     actions = ManagedActionStore(repository)
     sites = SiteStore(repository)
-    sites.create(make_site())
+    sites.create(site or make_site())
     factory = FakeAdapterFactory(FakePageAdapter())
     execute = build_execute_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)
     rollback = build_rollback_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)
@@ -95,6 +106,7 @@ def world(warehouse, now=SETTLED_NOW):
         repository=repository,
         action_store=actions,
         feedback_store=feedback,
+        site_store=sites,
         warehouse=warehouse,
         transaction=repository.transaction,
         clock=lambda: clock["now"],
@@ -190,6 +202,60 @@ def test_a_worse_ctr_fails_and_the_change_can_still_be_undone():
     w.rollback({"action_id": ACTION_ID})
     assert w.actions.get(ACTION_ID).status == ActionStatus.ROLLED_BACK
     assert len(w.feedback.list_for_tenant(TENANT)) == 1, "what was measured stays learned"
+
+
+@pytest.mark.parametrize(
+    "after,status",
+    [
+        (55, ActionStatus.SUCCEEDED),     # +10%: the threshold itself is met
+        (54, ActionStatus.INCONCLUSIVE),  # +8%: noise, not a failure
+        (45, ActionStatus.INCONCLUSIVE),  # -10%: not beyond the regression threshold
+        (44, ActionStatus.FAILED),        # -12%
+    ],
+)
+def test_a_change_inside_the_noise_band_is_inconclusive_not_failed(after, status):
+    w = world(FakeWarehouse(daily(before=50, after=after, impressions=1000)))
+
+    w.runner.run_round()
+
+    settled = w.actions.get(ACTION_ID)
+    assert settled.status == status
+    if status == ActionStatus.INCONCLUSIVE:
+        assert settled.history[-1].detail["reasons"][0] == "primary_metric_change_within_noise_band"
+
+
+def connected_site(property_url):
+    return make_site().model_copy(
+        update={
+            "gsc": GSCConnectionConfig(
+                property_url=property_url,
+                credential_ref=SecretRef(provider=SecretProvider.ENVIRONMENT, key="GSC_TOKEN"),
+                auth_mode="access_token",
+            )
+        }
+    )
+
+
+def test_days_still_held_from_a_property_the_site_left_do_not_count():
+    # The site moved to the domain property; three days of the second window
+    # are still the old URL-prefix copy, not yet fetched again.
+    old = {day: "https://example.com/" for day in days(date(2026, 8, 20), date(2026, 8, 22))}
+    w = world(FakeWarehouse(daily(5, 7), properties=old), site=connected_site(PROPERTY))
+
+    assert w.runner.run_round().waiting == 1
+
+    w.clock["now"] = AFTER_DEADLINE
+    w.runner.run_round()
+    settled = w.actions.get(ACTION_ID)
+    assert settled.history[-2].detail["data_complete"] is False
+    assert settled.history[-2].detail["current"]["completeness"] == round(25 / 28, 6)
+
+
+def test_a_disconnected_site_is_measured_from_the_property_its_newest_days_came_from():
+    # make_site() has no Search Console connection; every stored day is PROPERTY.
+    w = world(FakeWarehouse(daily(5, 7)))
+    assert w.runner.run_round().settled == 1
+    assert w.actions.get(ACTION_ID).history[-2].detail["data_complete"] is True
 
 
 def test_it_waits_until_the_second_window_is_final():
@@ -304,7 +370,10 @@ def test_a_rollback_the_site_refused_no_longer_holds_the_measurement():
 
 def test_runner_settings_are_checked():
     with pytest.raises(ValueError):
-        MeasurementRunner(repository=None, action_store=None, feedback_store=None, warehouse=None, window_days=0)
+        MeasurementRunner(
+            repository=None, action_store=None, feedback_store=None, site_store=None, warehouse=None,
+            window_days=0,
+        )
 
 
 # ---- learning, per tenant ----------------------------------------------------------------

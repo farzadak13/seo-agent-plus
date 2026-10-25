@@ -21,7 +21,6 @@ line can arrive mangled without an error. The test writes Persian over HTTP.
 from __future__ import annotations
 
 import os
-import secrets
 import subprocess
 import sys
 import time
@@ -47,9 +46,14 @@ def compose(*args: str, capture: bool = False) -> str:
     return (result.stdout or "").strip() if capture else ""
 
 
+# -T: no terminal. With one, stderr joins stdout and lines end in CRLF, and a
+# PHP notice would land in .env.wordpress in place of the password.
+WP = [*COMPOSE, "run", "--rm", "--no-deps", "-T", "cli", "wp"]
+
+
 def wp(*args: str, check: bool = True) -> str:
     result = subprocess.run(
-        [*COMPOSE, "run", "--rm", "--no-deps", "cli", "wp", *args],
+        [*WP, *args],
         text=True,
         encoding="utf-8",
         stdout=subprocess.PIPE,
@@ -77,14 +81,16 @@ def up() -> None:
     compose("up", "-d", "--wait", "db", "wordpress")
     wait_for_http()
 
+    # No passwords on these command lines, where `ps` and `docker inspect`
+    # would show them: WP-CLI makes random ones and prints them, and wp()
+    # captures that output and drops it. Neither account is ever logged into;
+    # the test works through the application password.
     if not _installed():
         wp(
             "core", "install",
             f"--url={BASE_URL}",
             "--title=HoshyarSEO Test",
             "--admin_user=admin",
-            # Never used: the test works as the Editor. Random so nothing guessable exists.
-            f"--admin_password={secrets.token_urlsafe(24)}",
             "--admin_email=admin@example.test",
             "--skip-email",
         )
@@ -92,18 +98,21 @@ def up() -> None:
     wp("plugin", "activate", "hoshyarseo-connector")
 
     if not wp("user", "get", EDITOR, "--field=ID", check=False):
-        wp(
-            "user", "create", EDITOR, "editor@example.test", "--role=editor",
-            f"--user_pass={secrets.token_urlsafe(24)}",
-        )
+        wp("user", "create", EDITOR, "editor@example.test", "--role=editor")
     wp("user", "application-password", "delete", EDITOR, "--all", check=False)
     password = wp("user", "application-password", "create", EDITOR, "seoagent-tests", "--porcelain")
+    if not password or any(character.isspace() for character in password):
+        sys.exit("WP-CLI did not return a bare application password; nothing was written.")
 
-    if not wp("post", "list", "--post_type=page", f"--name={PAGE_SLUG}", "--field=ID"):
-        wp(
+    page_id = wp("post", "list", "--post_type=page", f"--name={PAGE_SLUG}", "--field=ID")
+    if not page_id:
+        page_id = wp(
             "post", "create", "--post_type=page", "--post_status=publish",
-            "--post_title=Mens shoes", f"--post_name={PAGE_SLUG}",
+            "--post_title=Mens shoes", f"--post_name={PAGE_SLUG}", "--porcelain",
         )
+    # A test that stopped between writing and undoing leaves an override on
+    # the page; every later run would then start from the wrong title.
+    wp("post", "meta", "delete", page_id, "_hoshyarseo_title", check=False)
 
     with open(ENV_FILE, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(
@@ -120,7 +129,7 @@ def up() -> None:
 def _installed() -> bool:
     # `wp core is-installed` answers only through its exit code.
     result = subprocess.run(
-        [*COMPOSE, "run", "--rm", "--no-deps", "cli", "wp", "core", "is-installed"],
+        [*WP, "core", "is-installed"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

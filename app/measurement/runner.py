@@ -53,7 +53,8 @@ from app.models.outcomes import OutcomeEvaluationPolicy, OutcomeEvaluationResult
 from app.models.persistence import PersistenceRecord
 from app.models.snapshots import SnapshotMetadata
 from app.outcome.engine import evaluate_outcome
-from app.persistence.contracts import PersistenceConflictError
+from app.onboarding.site_store import SiteStore
+from app.persistence.contracts import PersistenceConflictError, PersistenceNotFoundError
 from app.warehouse.planner import search_console_today, sync_window
 
 
@@ -69,12 +70,14 @@ OUTCOME_SCHEMA_VERSION = 1
 CONFIG_VERSION = "measurement-stage39-v1"
 
 # A new title is for the click: CTR is what it can move. 10% either way is
-# well outside a month's ordinary noise on a query with steady impressions.
+# well outside a month's ordinary noise on a query with steady impressions,
+# and a change inside that band says nothing either way: INCONCLUSIVE.
 POLICIES: dict[ActionType, OutcomeEvaluationPolicy] = {
     ActionType.OPTIMIZE_TITLE: OutcomeEvaluationPolicy(
         primary_metric=OutcomeMetric.CTR,
         min_relative_improvement=0.10,
         max_relative_regression=0.10,
+        inconclusive_within_band=True,
     ),
 }
 
@@ -148,6 +151,7 @@ class MeasurementRunner:
         repository,
         action_store: ManagedActionStore,
         feedback_store: FeedbackStore,
+        site_store: SiteStore,
         warehouse,
         transaction: Callable = nullcontext,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
@@ -161,6 +165,7 @@ class MeasurementRunner:
         self._repository = repository
         self._actions = action_store
         self._feedback = feedback_store
+        self._sites = site_store
         self._warehouse = warehouse
         self._transaction = transaction
         self._clock = clock
@@ -218,11 +223,16 @@ class MeasurementRunner:
             ledger = self._warehouse.ledger(
                 site_id=managed.site_id, start=windows.baseline_start, end=windows.current_end
             )
-            stored = {entry.day for entry in ledger if entry.status.value == "synced"}
+            # Only days from one property are compared: a day the warehouse
+            # still holds from a property the site has since left is a
+            # different source until it is fetched again, so it does not count.
+            property_url = self._property_of(managed.site_id, ledger)
+            own = [entry for entry in ledger if entry.property_url == property_url]
+            stored = {entry.day for entry in own if entry.status.value == "synced"}
             complete = all(day in stored for day in windows.compared_days())
             if not complete and newest_final < windows.current_end + timedelta(days=self._deadline_days):
                 return False
-            capped = {entry.day for entry in ledger if entry.page_rows_capped}
+            capped = {entry.day for entry in own if entry.page_rows_capped}
             outcome = self._evaluate(
                 managed, windows, policy, stored=stored, capped=capped, complete=complete, now=now
             )
@@ -301,6 +311,17 @@ class MeasurementRunner:
                 }
             }
         )
+
+    def _property_of(self, site_id: str, ledger) -> str | None:
+        """The site's Search Console property; once disconnected, the one its newest stored day came from."""
+        try:
+            site = self._sites.get(site_id)
+        except PersistenceNotFoundError:
+            site = None
+        if site is not None and site.gsc is not None:
+            return site.gsc.property_url
+        synced = [entry for entry in ledger if entry.status.value == "synced"]
+        return max(synced, key=lambda entry: entry.fetched_at).property_url if synced else None
 
     # --- recording ----------------------------------------------------------
 
