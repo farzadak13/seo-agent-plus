@@ -40,3 +40,13 @@ the live database tests, are in [docs/database.md](docs/database.md).
 pytest -q -m "not integration"   # no external services
 pytest -q -m integration         # needs SEO_AGENT_TEST_DSN and ARVAN_AI_ENDPOINT
 ```
+
+The title change on a real WordPress (approve, write, verify, undo) runs
+against a throwaway one in Docker, with the connector plugin from this
+checkout:
+
+```powershell
+python scripts/local_wordpress.py up     # writes .env.wordpress
+pytest -q -m integration tests/integration/test_wordpress_live.py
+python scripts/local_wordpress.py down   # removes it, data included
+```
