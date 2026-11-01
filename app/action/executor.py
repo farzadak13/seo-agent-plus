@@ -406,9 +406,8 @@ def _verify(managed: ManagedAction, adapter) -> ManagedAction:
         observed_state={"title": observed},
     )
     verified = apply_verification(action=managed.action, verification=verification)
-    changes = {}
-    if verified.status == ActionStatus.FAILED:
-        changes["error"] = "The title was written but the page does not show it."
+    # Set or cleared: an earlier attempt may have left its error here.
+    error = "The title was written but the page does not show it." if verified.status == ActionStatus.FAILED else None
     detail = {"rendered_title": page.title}
     if stored_ok and not rendered_ok:
         detail["note"] = "stored on the site; the public page is still cached"
@@ -417,7 +416,7 @@ def _verify(managed: ManagedAction, adapter) -> ManagedAction:
         actor=SYSTEM_ACTOR,
         reason=f"verification_{verification.status.value}",
         detail=detail,
-        **changes,
+        error=error,
     )
 
 

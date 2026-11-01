@@ -2,7 +2,7 @@
 
 import { api, messageFor } from "../api.js";
 import { h, fmt, readableUrl } from "../dom.js";
-import { statusLabel, eventLabel, ROLLBACKABLE } from "../labels.js";
+import { actionLabel, eventLabel, APPLYING, ROLLBACKABLE } from "../labels.js";
 
 // The change is judged after: settle days + the second window + Search Console's lag.
 const DAYS_UNTIL_VERDICT = 7 + 28 + 4;
@@ -108,7 +108,7 @@ function historyList(action) {
 // What a person can do at this stage. `refresh` redraws the list from the server.
 export function actionCard(action, { site, refresh, drafts, focused = false }) {
   const manual = site?.site_adapter_type === "manual";
-  const label = statusLabel(action.status);
+  const label = actionLabel(action);
   const problem = h("div", { class: "notice notice-error hidden", role: "alert" });
 
   const act = async (button, path, body, then) => {
@@ -184,8 +184,7 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
       checking ? h("div", { class: "small", text: "در حال بررسی صفحه…" }) : null,
     ));
     body.push(h("div", { class: "approval-actions" }, check, copyButton(title), reject));
-  } else if (["approved", "executing", "executed", "waiting_for_recrawl"].includes(action.status) && !action.error) {
-    // With an error the attempts may be over; the error below says what to do.
+  } else if (APPLYING.has(action.status) && !action.error) {
     body.push(h("div", { class: "notice", text: "در حال اعمال و بررسی روی سایت…" }));
   }
 

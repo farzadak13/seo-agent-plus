@@ -20,6 +20,16 @@ export function statusLabel(status) {
   return STATUS[status] || { text: "در حال پردازش", tone: "" };
 }
 
+// Between approval and the check on the page. With an error, the attempts may
+// be over, so neither the label nor the card may say it is still on its way.
+export const APPLYING = new Set(["approved", "executing", "executed", "waiting_for_recrawl"]);
+
+export function actionLabel(action) {
+  return action.error && APPLYING.has(action.status)
+    ? { text: "با مشکل روبه‌رو شد", tone: "warn" }
+    : statusLabel(action.status);
+}
+
 export const IN_PROGRESS = new Set(["approved", "executing", "executed", "waiting_for_recrawl", "measurement_window_active", "evaluating"]);
 
 // Waiting on a person: a decision, or on a manual site the title to put in place.

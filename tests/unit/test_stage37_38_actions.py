@@ -301,6 +301,31 @@ def test_an_unreachable_site_is_recorded_and_retried():
     assert stored.error is None
 
 
+def test_a_passing_failure_to_read_the_page_back_leaves_no_error_behind():
+    class ReadBackFailsOnce(FakePageAdapter):
+        failed = False
+
+        def read_page(self, **kwargs):
+            if self.writes and not self.failed:
+                self.failed = True
+                raise RuntimeError("no answer")
+            return super().read_page(**kwargs)
+
+    action_store, _, _, execute, _ = make_world(ReadBackFailsOnce())
+    action_store.create(approve(make_pending(), actor="principal-1"))
+
+    with pytest.raises(RuntimeError):
+        execute({"action_id": "action:run-1"})
+    stored = action_store.get("action:run-1")
+    assert stored.status == ActionStatus.EXECUTED
+    assert "no answer" in stored.error
+
+    execute({"action_id": "action:run-1"})
+    stored = action_store.get("action:run-1")
+    assert stored.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE
+    assert stored.error is None, "weeks of measuring must not sit under an old error"
+
+
 def test_a_timeout_after_the_site_accepted_the_write_is_not_lost():
     class AcceptsThenTimesOut(FakePageAdapter):
         def update_title(self, **kwargs):

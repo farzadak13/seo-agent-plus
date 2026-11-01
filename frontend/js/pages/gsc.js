@@ -120,11 +120,15 @@ export async function gscPage(container, { site, alive, refreshCount }) {
       h("button", {
         class: sorted ? "sorted" : "", type: "button",
         text: `${label}${sorted ? (view.order === "asc" ? " ▲" : " ▼") : ""}`,
-        onclick: () => load({
-          changes: sorted
-            ? { order: view.order === "asc" ? "desc" : "asc" }
-            : { sort: key, order: key === "position" ? "asc" : "desc" },
-        }),
+        onclick: () => {
+          // On top of a click whose answer has not arrived yet.
+          const { sort, order } = { ...view, ...pending };
+          load({
+            changes: sort === key
+              ? { order: order === "asc" ? "desc" : "asc" }
+              : { sort: key, order: key === "position" ? "asc" : "desc" },
+          });
+        },
       }));
   }
 

@@ -55,6 +55,7 @@ async function open(site = WORDPRESS) {
 const checked = (card) => findAll(card, (element) => element.type === "radio" && element.checked).map((radio) => radio.value);
 const titleBox = (card) => findAll(card, (element) => element.tagName === "input" && element.type === "text")[0];
 const notices = (card) => findAll(card, (element) => element.attributes.role === "alert" && !element.classList.contains("hidden"));
+const badges = (root) => findAll(root, (element) => element.classList.contains("badge")).map((element) => element.textContent);
 
 // Card a moves on while b waits: this is what used to turn b back to its first title.
 async function approveTheOtherCard(page, t) {
@@ -170,12 +171,21 @@ test("a change with an error does not also claim to be under way", async () => {
   findAll(container, (element) => element.attributes.role === "tab")[1].click();
   assert.ok(!container.textContent.includes(UPDATING));
   assert.ok(container.textContent.includes("این مرحله با خطا روبه‌رو شد"));
+  assert.deepEqual(badges(container), ["با مشکل روبه‌رو شد"]);
 });
 
 test("a change on its way says so", async () => {
   server.actions = [appliedChange({ status: "executing", applied: null })];
   const { container } = await open();
   assert.ok(container.textContent.includes(UPDATING));
+  assert.deepEqual(badges(container), ["در حال اعمال"]);
+});
+
+test("a finished change keeps its result beside an error from undoing it", async () => {
+  server.actions = [appliedChange({ status: "succeeded", error: "boom" })];
+  const { container } = await open();
+  findAll(container, (element) => element.attributes.role === "tab")[2].click();
+  assert.deepEqual(badges(container), ["موفق"]);
 });
 
 const WAITING_TO_RESTORE = [{ reason: "waiting_for_customer_to_restore", at: "2026-10-02T00:00:00Z", detail: { restore_title: "old title" } }];

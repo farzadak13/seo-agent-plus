@@ -243,6 +243,157 @@ test("what was asked for by an overtaken click is not lost", async () => {
   assert.equal(firstKpi(container), fmt.int(7));
 });
 
+// Opens the page with the first chart request held, so the last day is not known.
+async function opening() {
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  server.hold = () => held;
+  const container = new FakeElement("main");
+  const done = gscPage(container, { site: SITE, alive: () => true, refreshCount: () => {} });
+  await settle();
+  server.hold = () => null;
+  return { container, finish: async () => { release(); await done; await settle(); } };
+}
+
+test("the sixteen-month range is asked for whole, by the week, once the last day is known", async () => {
+  const { container, finish } = await opening();
+  button(container, "۱۶ ماه").click();
+  await settle();
+  await finish();
+
+  const charts = server.requests.filter((url) => url.pathname.endsWith("/performance"));
+  const last = charts[charts.length - 1];
+  assert.equal(last.searchParams.get("start"), "2025-07-07");
+  assert.equal(last.searchParams.get("end"), END);
+  assert.equal(last.searchParams.get("interval"), "week");
+  assert.equal(firstKpi(container), fmt.int(480));
+});
+
+test("when asking again for the range fails, the choice falls back and a retry brings it", async () => {
+  const { container, finish } = await opening();
+  server.fail = (url) => url.pathname.endsWith("/performance") && url.searchParams.has("start");
+  button(container, "۳ ماه").click();
+  await settle();
+  await finish();
+  assert.equal(alerts(container).length, 1);
+  assert.ok(pressed(container).includes("۲۸ روز"));
+
+  server.fail = () => false;
+  button(container, "تلاش دوباره").click();
+  await settle();
+  assert.equal(firstKpi(container), fmt.int(90));
+  assert.ok(pressed(container).includes("۳ ماه"));
+});
+
+test("asking again for a range can be overtaken like any other request", async () => {
+  const { container, finish } = await opening();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  server.hold = (url) => (url.searchParams.get("start") === "2026-08-01" ? held : null);
+  button(container, "۳ ماه").click();
+  await settle();
+  await finish();
+  button(container, "۷ روز").click();
+  await settle();
+  release();
+  await settle();
+
+  assert.equal(firstKpi(container), fmt.int(7));
+  assert.ok(pressed(container).includes("۷ روز"));
+});
+
+const lastTable = () => [...server.requests].reverse().find((url) => !url.pathname.endsWith("/performance"));
+
+test("a second click on a column before the first has arrived turns it back", async () => {
+  const container = await open();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  server.hold = () => held;
+  const clicks = button(container, "کلیک‌ها ▼");
+  clicks.click();
+  await settle();
+  assert.equal(lastTable().searchParams.get("order"), "asc");
+  server.hold = () => null;
+  clicks.click();
+  await settle();
+  release();
+  await settle();
+
+  assert.equal(lastTable().searchParams.get("sort"), "clicks");
+  assert.equal(lastTable().searchParams.get("order"), "desc");
+});
+
+test("a click on another column before the first has arrived asks for that column's own order", async () => {
+  const container = await open();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  server.hold = () => held;
+  const clicks = button(container, "کلیک‌ها ▼");
+  button(container, "نمایش").click();
+  await settle();
+  server.hold = () => null;
+  clicks.click();
+  await settle();
+  release();
+  await settle();
+
+  assert.equal(lastTable().searchParams.get("sort"), "clicks");
+  assert.equal(lastTable().searchParams.get("order"), "desc");
+});
+
+test("more rows asked for during a change of view start that view, not add to the old one", async () => {
+  const container = await open();
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  server.hold = () => held;
+  const more = button(container, "نمایش بیشتر");
+  button(container, "نمایش").click();
+  await settle();
+  server.hold = () => null;
+  more.click();
+  await settle();
+  release();
+  await settle();
+
+  assert.equal(lastTable().searchParams.get("offset"), "0");
+  assert.equal(lastTable().searchParams.get("sort"), "impressions");
+  assert.equal(findAll(container, (element) => element.tagName === "tr").length, 2, "the head and one row");
+});
+
+test("typing on while a search is on its way drops that answer and asks for the new words", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const container = await open();
+  const box = findAll(container, (element) => element.type === "search")[0];
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  server.hold = () => held;
+  type(box, "کف");
+  t.mock.timers.tick(350);
+  await settle();
+
+  server.hold = () => null;
+  type(box, "کفش");
+  release();
+  await settle();
+  assert.equal(findAll(container, (element) => element.type === "search")[0], box, "not redrawn under the fingers");
+
+  t.mock.timers.tick(350);
+  await settle();
+  assert.equal(lastTable().searchParams.get("contains"), "کفش");
+});
+
+test("after a search the cursor is back in the box", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const container = await open();
+  type(findAll(container, (element) => element.type === "search")[0], "کفش");
+  t.mock.timers.tick(350);
+  await settle();
+
+  const box = findAll(container, (element) => element.type === "search")[0];
+  assert.ok(box.focused);
+  assert.equal(box.value, "کفش");
+});
+
 test("a search is sent once typing stops, and failing leaves the words in the box", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const container = await open();
