@@ -65,6 +65,7 @@ from app.onboarding.ownership import (
     property_matches_site,
     site_may_read_search_console,
 )
+from app.normalization.query import normalize_query
 from app.normalization.url import canonicalize_url
 from app.warehouse.models import Device as WarehouseDevice
 from app.warehouse.models import (
@@ -379,6 +380,14 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             ) from exc
         return SiteResponse.from_site(site)
 
+    @app.get("/v1/sites", response_model=list[SiteResponse])
+    def list_sites(
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> list[SiteResponse]:
+        """This tenant's sites, for the dashboard's site picker."""
+        sites = _require_site_store(dependencies).list_for_tenant(authenticated_principal_id)
+        return [SiteResponse.from_site(site) for site in sorted(sites, key=lambda s: s.created_at)]
+
     @app.get("/v1/sites/{site_id}", response_model=SiteResponse)
     def get_site(
         site_id: str,
@@ -690,6 +699,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         limit: int = 50,
         offset: int = 0,
         compare: Compare | None = None,
+        contains: str | None = None,
         authenticated_principal_id: str = Depends(principal_id),
     ) -> TableReport:
         site, reports = _readable_site(dependencies, site_id, authenticated_principal_id)
@@ -697,7 +707,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         return reports.pages(
             site_id=site_id, property_url=site.gsc.property_url, start=start, end=end,
             device=device, sort=sort, order=order, limit=limit, offset=offset,
-            compare=compare is Compare.PREVIOUS,
+            compare=compare is Compare.PREVIOUS, contains=_search_text(contains) or None,
         )
 
     @app.get("/v1/sites/{site_id}/performance/queries", response_model=TableReport)
@@ -712,10 +722,14 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         limit: int = 50,
         offset: int = 0,
         compare: Compare | None = None,
+        contains: str | None = None,
         authenticated_principal_id: str = Depends(principal_id),
     ) -> TableReport:
         site, reports = _readable_site(dependencies, site_id, authenticated_principal_id)
         start, end = _report_range(dependencies, start, end)
+        # Stored queries are normalised, so the search text has to be too:
+        # an Arabic kaf typed here must still find the Persian one.
+        text = normalize_query(_search_text(contains)) or None
         page_url = None
         if page is not None:
             try:
@@ -725,7 +739,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         report = reports.queries(
             site_id=site_id, property_url=site.gsc.property_url, start=start, end=end,
             device=device, page_url=page_url, sort=sort, order=order, limit=limit,
-            offset=offset, compare=compare is Compare.PREVIOUS,
+            offset=offset, compare=compare is Compare.PREVIOUS, contains=text,
         )
         if dependencies.keywords is None or not report.rows:
             return report
@@ -934,7 +948,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         try:
             tenant_id = oauth.preview(state)
         except OAuthError as exc:
-            return oauth_pages.error_page(str(exc))
+            return oauth_pages.error_page(str(exc), dependencies.dashboard_url)
         return oauth_pages.confirm_page(dependencies.tenant_name(tenant_id), BEGIN_PATH, state)
 
     @app.post(BEGIN_PATH, include_in_schema=False)
@@ -944,12 +958,12 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             # Only our own confirmation page may press "continue". A page
             # elsewhere auto-submitting this form would skip the screen that
             # names the account being connected.
-            return oauth_pages.error_page("This page can only be continued from HoshyarSEO itself.")
+            return oauth_pages.error_page("This page can only be continued from HoshyarSEO itself.", dependencies.dashboard_url)
         form = parse_qs((await http_request.body()).decode("utf-8", errors="replace"))
         try:
             _, google_url, nonce = oauth.begin((form.get("state") or [""])[0])
         except OAuthError as exc:
-            return oauth_pages.error_page(str(exc))
+            return oauth_pages.error_page(str(exc), dependencies.dashboard_url)
         response = RedirectResponse(google_url, status_code=status.HTTP_303_SEE_OTHER)
         response.set_cookie(
             OAUTH_COOKIE, nonce, max_age=600, path="/v1/oauth/google",
@@ -971,9 +985,9 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
                 browser_nonce=http_request.cookies.get(OAUTH_COOKIE),
             )
         except OAuthError as exc:
-            page = oauth_pages.error_page(str(exc))
+            page = oauth_pages.error_page(str(exc), dependencies.dashboard_url)
         else:
-            page = oauth_pages.done_page(connection.email)
+            page = oauth_pages.done_page(connection.email, dependencies.dashboard_url)
         page.delete_cookie(OAUTH_COOKIE, path="/v1/oauth/google")
         return page
 
@@ -1125,6 +1139,11 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         return ActionResponse.from_managed(requested, job_id=job.job_id)
 
     return app
+
+
+def _search_text(contains: str | None) -> str:
+    """What a table search is for: bounded, and without the NUL PostgreSQL refuses."""
+    return (contains or "").replace("\x00", "").strip()[:200]
 
 
 def _readable_site(dependencies: APIDependencies, site_id: str, tenant_id: str):

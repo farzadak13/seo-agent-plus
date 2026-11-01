@@ -21,10 +21,21 @@ pytest -q -m "not integration"
 Full instructions, including how to load `.env` in PowerShell and how to run
 the live database tests, are in [docs/database.md](docs/database.md).
 
+## The dashboard
+
+`frontend/` is the customer's site: plain HTML, CSS and ES modules, no build
+step, served by nginx at `/app/` beside the API. To work on it with the real
+API and invented data (no database, no Google):
+
+```powershell
+python scripts/dev_dashboard.py   # http://localhost:58090/app/  dev@example.test / dev-password
+```
+
 ## Layout
 
 | Path | What lives there |
 | --- | --- |
+| `frontend` | The dashboard |
 | `app/models` | Domain models. No I/O. |
 | `app/detectors`, `app/classifier`, `app/engine`, `app/opportunity`, `app/strategy` | Deterministic decision path |
 | `app/serp`, `app/title`, `app/reasoning` | SERP evidence and title proposals |

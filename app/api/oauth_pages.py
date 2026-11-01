@@ -62,24 +62,30 @@ def confirm_page(account_name: str, action: str, state: str) -> HTMLResponse:
     )
 
 
-def done_page(email: str | None) -> HTMLResponse:
+def done_page(email: str | None, back_url: str = "/") -> HTMLResponse:
     who = f' (<bdi>{escape(email)}</bdi>)' if email else ""
     return _page(
         "اتصال برقرار شد",
         f"<h1>اتصال برقرار شد{who}</h1>"
         "<p>حالا می‌توانید به هوشیار سئو برگردید و سایت خود را از فهرست انتخاب کنید.</p>"
-        '<p class="muted">این پنجره را می‌توانید ببندید.</p>',
+        f'<p><a href="{escape(_settings_of(back_url), quote=True)}">بازگشت به هوشیار سئو</a></p>',
     )
 
 
-def error_page(message: str) -> HTMLResponse:
+def error_page(message: str, back_url: str = "/") -> HTMLResponse:
     return _page(
         "اتصال انجام نشد",
         "<h1>اتصال انجام نشد</h1>"
         f'<p class="error"><bdi>{escape(message)}</bdi></p>'
-        '<p class="muted">از هوشیار سئو دوباره «اتصال گوگل» را بزنید.</p>',
+        '<p class="muted">از هوشیار سئو دوباره «اتصال گوگل» را بزنید.</p>'
+        f'<p><a href="{escape(_settings_of(back_url), quote=True)}">بازگشت به هوشیار سئو</a></p>',
         status_code=400,
     )
+
+
+def _settings_of(dashboard_url: str) -> str:
+    """The dashboard's settings page, where this connection is made."""
+    return f"{dashboard_url}#/settings" if dashboard_url.rstrip("/").endswith("/app") else dashboard_url
 
 
 def sign_in_error_page(message: str, retry_url: str) -> HTMLResponse:

@@ -51,6 +51,13 @@ say "unpacking ${NAME}"
 install -d -o "$APP_USER" -g "$APP_USER" -m 755 "$RELEASES"
 install -d -o "$APP_USER" -g "$APP_USER" -m 755 "$TARGET"
 tar -xzf "$TARBALL" -C "$TARGET"
+# The WordPress plugin as the dashboard offers it for download, built here so
+# the repository holds it once and it always matches this release.
+if [[ -d "${TARGET}/frontend" && -d "${TARGET}/integrations/wordpress/hoshyarseo-connector" ]]; then
+  mkdir -p "${TARGET}/frontend/downloads"
+  ( cd "${TARGET}/integrations/wordpress" \
+    && python3 -m zipfile -c "${TARGET}/frontend/downloads/hoshyarseo-connector.zip" hoshyarseo-connector )
+fi
 chown -R "${APP_USER}:${APP_USER}" "$TARGET"
 
 for required in pyproject.toml app migrations; do

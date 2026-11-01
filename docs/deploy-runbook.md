@@ -19,6 +19,10 @@
 
     cd /opt/seoagent/current/deploy
 
+اولین نسخه‌ای که `frontend/` دارد، یک بار (داشبورد در `/app/`؛ نسخه‌های بعدی چیزی نمی‌خواهند):
+
+    sudo bash frontend-setup.sh
+
 ## ۳. ایمنی، یک بار (روی سرور)
 
     sudo bash backup-setup.sh

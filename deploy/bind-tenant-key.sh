@@ -56,11 +56,9 @@ set -a
 source "$ENV_FILE"
 set +a
 CODE="$(curl --resolve "hoshyarseo.ir:443:127.0.0.1" -s -o /dev/null -w '%{http_code}' \
-        --max-time 15 "https://hoshyarseo.ir/v1/sites" -X POST \
-        -H "authorization: bearer ${SEO_AGENT_TENANT_KEY}" \
-        -H 'content-type: application/json' \
-        -d '{"name":"key check","base_url":"https://example.com"}')"
-if [[ "$CODE" != "201" ]]; then
+        --max-time 15 "https://hoshyarseo.ir/v1/sites" \
+        -H "authorization: bearer ${SEO_AGENT_TENANT_KEY}")"
+if [[ "$CODE" != "200" ]]; then
   echo "The new key was refused (HTTP ${CODE})." >&2
   exit 1
 fi

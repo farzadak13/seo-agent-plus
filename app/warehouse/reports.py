@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import date, timedelta
+from urllib.parse import quote
 
 from app.warehouse.models import (
     Device,
@@ -57,6 +58,12 @@ def _metrics(clicks, impressions, position_sum) -> MetricValues:
         ctr=(clicks / impressions) if impressions else None,
         position=(float(position_sum) / impressions) if impressions else None,
     )
+
+
+def _like_pattern(text: str) -> str:
+    """Anywhere in the value, with LIKE's own wildcards taken literally."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def previous_range(start: date, end: date) -> tuple[date, date]:
@@ -139,27 +146,30 @@ class WarehouseReports:
         self, *, site_id: str, property_url: str, start: date, end: date,
         device: Device | None = None, sort: SortKey = SortKey.CLICKS,
         order: SortOrder = SortOrder.DESC, limit: int = 50, offset: int = 0, compare: bool = False,
+        contains: str | None = None,
     ) -> TableReport:
         return self._table(
             kind="page", site_id=site_id, property_url=property_url, start=start, end=end,
             device=device, sort=sort, order=order, limit=limit, offset=offset, compare=compare,
+            contains=contains,
         )
 
     def queries(
         self, *, site_id: str, property_url: str, start: date, end: date,
         device: Device | None = None, page_url: str | None = None, sort: SortKey = SortKey.CLICKS,
         order: SortOrder = SortOrder.DESC, limit: int = 50, offset: int = 0, compare: bool = False,
+        contains: str | None = None,
     ) -> TableReport:
         return self._table(
             kind="query", site_id=site_id, property_url=property_url, start=start, end=end,
             device=device, page_url=page_url, sort=sort, order=order, limit=limit,
-            offset=offset, compare=compare,
+            offset=offset, compare=compare, contains=contains,
         )
 
     def _table(
         self, *, kind: str, site_id: str, property_url: str, start: date, end: date,
         device: Device | None, sort: SortKey, order: SortOrder, limit: int, offset: int,
-        compare: bool, page_url: str | None = None,
+        compare: bool, page_url: str | None = None, contains: str | None = None,
     ) -> TableReport:
         sort, order = SortKey(sort), SortOrder(order)
         sort_sql, order_sql = SORTS[sort], ORDERS[order]
@@ -179,13 +189,26 @@ class WarehouseReports:
             filters.append("AND d.page_id = (SELECT page_id FROM gsc_pages WHERE site_id = %(site)s AND url = %(page)s)")
             params["page"] = page_url
         where = " ".join(filters)
+        # On the label, so only in the aggregate: the comparison below is
+        # already limited to the rows this one found.
+        label_filter = ""
+        if contains:
+            label_filter = f"AND ({label} ILIKE %(contains)s"
+            params["contains"] = _like_pattern(contains)
+            if kind == "page":
+                # Page URLs are stored as Google sends them, percent-encoded,
+                # while the dashboard shows them decoded: someone typing the
+                # Persian they read must still find them.
+                label_filter += f" OR {label} ILIKE %(contains_encoded)s"
+                params["contains_encoded"] = _like_pattern(quote(contains, safe="/:?=&-._~"))
+            label_filter += ")"
 
         aggregate = f"""
             SELECT {key} AS id, {label} AS label,
                    sum(d.clicks) AS clicks, sum(d.impressions) AS impressions,
                    sum(d.position_sum) AS position_sum
               FROM {table} d {_SYNCED} {label_join}
-             WHERE d.site_id = %(site)s AND d.day BETWEEN %(start)s AND %(end)s {where}
+             WHERE d.site_id = %(site)s AND d.day BETWEEN %(start)s AND %(end)s {where} {label_filter}
              GROUP BY 1, 2
         """  # noqa: S608 - names come from the fixed branches above
         with self._cursor() as cursor:

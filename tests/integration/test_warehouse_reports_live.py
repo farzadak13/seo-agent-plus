@@ -143,6 +143,29 @@ def test_queries_of_one_page():
     assert [(r.key, r.current.clicks) for r in rows] == [("توپ تنیس", 4)]
 
 
+def test_a_percent_encoded_page_is_found_by_the_persian_people_read(data):
+    encoded = "https://tennisino.com/%D8%A2%D9%85%D9%88%D8%B2%D8%B4-%D9%BE%D8%AF%D9%84/"
+    data.replace_day(day(D1, [(Device.MOBILE, encoded, "آموزش پدل", 2, 20, 3.0)]))
+
+    found = reports().pages(site_id="s1", property_url=PROPERTY, start=D1, end=D3, contains="آموزش").rows
+
+    assert [row.key for row in found] == [encoded]
+
+
+def test_a_table_can_be_searched_and_percent_is_not_a_wildcard():
+    found = reports().queries(site_id="s1", property_url=PROPERTY, start=D1, end=D3, contains="راکت").rows
+    assert [row.key for row in found] == ["راکت تنیس"]
+    pages = reports().pages(site_id="s1", property_url=PROPERTY, start=D1, end=D3, contains="BALLS").rows
+    assert [row.key for row in pages] == [B], "case does not matter"
+    assert reports().queries(site_id="s1", property_url=PROPERTY, start=D1, end=D3, contains="%").rows == []
+
+
+def test_a_searched_table_still_compares_with_the_period_before():
+    report = reports().pages(site_id="s1", property_url=PROPERTY, start=D2, end=D3, compare=True, contains="balls")
+    assert [row.key for row in report.rows] == [B]
+    assert report.rows[0].previous is not None
+
+
 def test_another_site_reads_nothing():
     report = reports().pages(site_id="s2", property_url=PROPERTY, start=D1, end=D3)
     assert report.rows == []

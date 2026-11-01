@@ -212,6 +212,9 @@ server {
         access_log off;
     }
 
+    # The dashboard: deploy/nginx-app.conf, installed by frontend-setup.sh.
+    include /etc/nginx/snippets/hoshyarseo-app*.conf;
+
     location / {
         try_files \$uri \$uri/ =404;
     }

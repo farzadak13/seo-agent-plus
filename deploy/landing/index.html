@@ -43,6 +43,9 @@
     display: flex; align-items: center; gap: 10px;
     font-weight: 700; font-size: 18px; letter-spacing: -0.2px;
   }
+  .head-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+  .enter { color: var(--accent); font-weight: 600; font-size: 15px; text-decoration: none; }
+  .enter:hover { text-decoration: underline; }
   .mark {
     width: 30px; height: 30px; border-radius: 9px;
     background: var(--accent-soft); color: var(--accent);
@@ -93,8 +96,9 @@
 <body>
 
 <header>
-  <div class="wrap">
+  <div class="wrap head-row">
     <div class="brand"><span class="mark">ه</span> هوشیار سئو</div>
+    <a class="enter" href="/app/">ورود به حساب</a>
   </div>
 </header>
 

@@ -98,6 +98,9 @@ class SiteResponse(BaseModel):
     # connected without the customer having to remember how they spelled it.
     gsc_property_url: str | None = None
     site_adapter_configured: bool
+    # "hoshyarseo", "manual", ...: tells a UI whether the service writes the
+    # change or the customer applies it. Never the connection's credentials.
+    site_adapter_type: str | None = None
     ownership_verified: bool = False
     created_at: datetime
     updated_at: datetime
@@ -113,6 +116,7 @@ class SiteResponse(BaseModel):
             gsc_configured=site.gsc is not None,
             gsc_property_url=site.gsc.property_url if site.gsc else None,
             site_adapter_configured=site.site_adapter is not None,
+            site_adapter_type=site.site_adapter.adapter_type if site.site_adapter else None,
             ownership_verified=site.ownership_verified_at is not None,
             created_at=site.created_at,
             updated_at=site.updated_at,
