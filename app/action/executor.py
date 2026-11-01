@@ -55,6 +55,9 @@ def build_execute_action_handler(
             # Building the adapter touches nothing on the site.
             adapter = adapter_factory.build(site_store.get(managed.site_id))
             if getattr(adapter, "manual_apply", False):
+                if managed.status == ActionStatus.EXECUTED:
+                    # Seen on the page, then interrupted before the check.
+                    return _summary(action_store.update(_verify(managed, adapter)))
                 if managed.status != ActionStatus.APPROVED:
                     return _summary(managed, skipped=True)
                 return _summary(_check_applied_by_customer(managed, adapter, action_store))

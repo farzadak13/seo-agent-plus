@@ -105,6 +105,33 @@ def test_once_the_page_shows_it_the_change_is_recorded_and_verified():
     ]
 
 
+def test_a_failed_check_after_the_title_was_seen_is_picked_up_by_the_next_attempt():
+    actions, page, execute, _ = world()
+    page.title = NEW_TITLE
+    read = page.read_page
+    reads = []
+
+    def second_read_fails(**kwargs):
+        reads.append(kwargs)
+        if len(reads) == 2:
+            raise RuntimeError("no answer")
+        return read(**kwargs)
+
+    page.read_page = second_read_fails
+
+    with pytest.raises(RuntimeError):
+        execute({"action_id": ACTION_ID})
+    stored = actions.get(ACTION_ID)
+    assert stored.status == ActionStatus.EXECUTED
+    assert "no answer" in stored.error
+
+    # The customer can no longer report it applied: only this attempt moves it on.
+    execute({"action_id": ACTION_ID})
+    stored = actions.get(ACTION_ID)
+    assert stored.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE
+    assert stored.error is None
+
+
 def test_a_job_for_an_action_already_applied_does_nothing():
     actions, page, execute, _ = world()
     page.title = NEW_TITLE
