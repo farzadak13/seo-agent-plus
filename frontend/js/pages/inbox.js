@@ -35,20 +35,22 @@ export async function inboxPage(container, { site, param, alive, refreshCount })
 
   const drafts = new Map();  // action id -> the title chosen or typed so far
 
+  // False when the list could not be fetched, for whoever is waiting on it.
   const refresh = async () => {
-    if (!alive()) return;
+    if (!alive()) return true;
     let fresh;
     try {
       fresh = await loadActions(site.site_id);
     } catch {
-      return;  // a later look, or a reload, will catch up
+      return false;
     }
-    if (!alive()) return;
+    if (!alive()) return true;
     // Unchanged: leave the page alone, so focus and scrolling stay where they are.
-    if (JSON.stringify(fresh) === JSON.stringify(actions)) return;
+    if (JSON.stringify(fresh) === JSON.stringify(actions)) return true;
     actions = fresh;
     draw();
     refreshCount();
+    return true;
   };
 
   function draw() {

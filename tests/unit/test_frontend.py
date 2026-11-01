@@ -1,5 +1,8 @@
 """The dashboard's static files: what they call exists, and what they must never do they don't."""
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -39,6 +42,20 @@ def client_for(principal="principal-1", sites=()):
 
 
 # ---- the static files ------------------------------------------------------------------
+
+
+def test_the_pages_behave_when_driven_in_node():
+    node = shutil.which("node")
+    if node is None:
+        # Right on a laptop without Node, wrong in CI: a skip would read as a pass.
+        assert not os.environ.get("CI"), "CI has to run the page tests"
+        pytest.skip("Node is not installed.")
+    tests = sorted(str(path) for path in (ROOT / "tests" / "frontend").glob("*.test.mjs"))
+    assert tests, "the search above stopped finding the tests"
+    result = subprocess.run(
+        [node, "--test", *tests], cwd=ROOT, capture_output=True, encoding="utf-8", timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_every_api_path_the_pages_call_exists():

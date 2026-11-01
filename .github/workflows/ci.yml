@@ -41,6 +41,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      # The dashboard's page tests run under the unit tests.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: install
         run: |
           python -m pip install --upgrade pip

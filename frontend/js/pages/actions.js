@@ -32,11 +32,14 @@ function lastEvent(action, reason) {
 // "idle": can be asked for. "running": a request is with the job. "stuck": the
 // job's last attempt raised, so it may have run out of retries; asking again is
 // safe (the write carries an idempotency key) and must stay possible.
-function rollbackState(action) {
+function rollbackState(action, manual) {
   for (let i = action.history.length - 1; i >= 0; i -= 1) {
     const { reason } = action.history[i];
     if (reason === "rollback_error") return "stuck";
-    if (reason === "rollback_requested" || reason === "waiting_for_customer_to_restore") return "running";
+    if (reason === "rollback_requested") return "running";
+    // The connection has since changed: no job is coming and nobody is asked to
+    // restore by hand, so it has to be possible to ask again.
+    if (reason === "waiting_for_customer_to_restore") return manual ? "running" : "idle";
     if (["rollback_refused", "rollback_refused_page_changed", "rollback_failed", "rollback_not_verified"].includes(reason)) return "idle";
   }
   return "idle";
@@ -113,18 +116,25 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
     problem.classList.add("hidden");
     try {
       await api(path, { method: "POST", body: body ?? {} });
-      await (then ? then() : refresh());
     } catch (error) {
       problem.textContent = messageFor(error);
       problem.classList.remove("hidden");
       button.disabled = false;
+      return;
+    }
+    // Done on the server, so the button stays off: only the list is behind.
+    if (await then() === false) {
+      problem.textContent = "ثبت شد، ولی فهرست تازه نشد. اگر تا چند لحظهٔ دیگر تغییری ندیدید، صفحه را دوباره باز کنید.";
+      problem.classList.remove("hidden");
     }
   };
-  // Approving and undoing are carried out by a job, which reads and writes the
-  // customer's site; keep looking for a while. The list redraws only on a change.
+  // Most of these are carried out by a job, which reads and writes the customer's
+  // site; keep looking for a while, and a failed look gets another chance. The
+  // list redraws only on a change.
   const refreshSoon = async () => {
-    await refresh();
+    const shown = await refresh();
     for (const wait of [2000, 5000, 10000, 20000, 40000]) setTimeout(refresh, wait);
+    return shown;
   };
 
   const body = [];
@@ -136,7 +146,7 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
     : h("span", { class: "page-url", text: action.normalized_url });
 
   if (action.status === "awaiting_approval") {
-    body.push(awaitingApproval(action, { manual, act, refreshSoon, refresh, drafts }));
+    body.push(awaitingApproval(action, { manual, act, refreshSoon, drafts }));
   } else {
     const applied = action.applied;
     body.push(h("div", { class: "title-compare" }, action.rolled_back
@@ -164,7 +174,7 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
     });
     const reject = h("button", {
       class: "btn", type: "button", text: "منصرف شدم",
-      onclick: () => act(reject, actionPath(action, "reject"), {}),
+      onclick: () => act(reject, actionPath(action, "reject"), {}, refreshSoon),
     });
     body.push(h("div", { class: "apply-box" },
       "این عنوان را در تنظیمات همین صفحهٔ سایتتان بگذارید:",
@@ -174,7 +184,8 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
       checking ? h("div", { class: "small", text: "در حال بررسی صفحه…" }) : null,
     ));
     body.push(h("div", { class: "approval-actions" }, check, copyButton(title), reject));
-  } else if (["approved", "executing", "executed", "waiting_for_recrawl"].includes(action.status)) {
+  } else if (["approved", "executing", "executed", "waiting_for_recrawl"].includes(action.status) && !action.error) {
+    // With an error the attempts may be over; the error below says what to do.
     body.push(h("div", { class: "notice", text: "در حال اعمال و بررسی روی سایت…" }));
   }
 
@@ -192,7 +203,7 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
 
   if (ROLLBACKABLE.has(action.status) && action.applied && !action.rolled_back) {
     const restoring = lastEvent(action, "waiting_for_customer_to_restore");
-    const rollback = rollbackState(action);
+    const rollback = rollbackState(action, manual);
     if (rollback === "running" && restoring && manual) {
       const title = restoring.detail.restore_title;
       const again = h("button", {
@@ -234,7 +245,7 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
   );
 }
 
-function awaitingApproval(action, { manual, act, refreshSoon, refresh, drafts }) {
+function awaitingApproval(action, { manual, act, refreshSoon, drafts }) {
   const group = `title-${action.action_id}`;
   // Kept outside the card: the list is redrawn when another action moves on, and
   // that must never turn the title someone chose back into the proposed one.
@@ -274,7 +285,7 @@ function awaitingApproval(action, { manual, act, refreshSoon, refresh, drafts })
   });
   const reject = h("button", {
     class: "btn", type: "button", text: "رد کردن",
-    onclick: () => act(reject, actionPath(action, "reject"), {}, refresh),
+    onclick: () => act(reject, actionPath(action, "reject"), {}, refreshSoon),
   });
 
   return h("div", { class: "approval-desc" },

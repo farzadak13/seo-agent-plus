@@ -65,15 +65,18 @@ export async function gscPage(container, { site, alive, refreshCount }) {
   const chartNote = h("div", { class: "chart-note hidden" });
   const tableArea = h("div", {});
   const runNotice = h("div", { class: "hidden", role: "status" });
+  const loadNotice = h("div", { class: "hidden", role: "alert" });
   let performance = null;
   let endDay = null;
-  let tableToken = 0;
+  let loadToken = 0;
   let searchTimer = null;
+  // `view` is what is on screen. What was asked for waits here until it has
+  // arrived, so a failed or overtaken request leaves the rows and their buttons
+  // matching the view.
+  let pending = {};
+  let chartPending = false;
 
-  const range = () => {
-    const end = endDay;
-    return end ? { start: isoDaysBefore(end, view.days - 1), end } : {};
-  };
+  const range = (state) => (endDay ? { start: isoDaysBefore(endDay, state.days - 1), end: endDay } : {});
 
   function drawChart() {
     if (!performance) return;
@@ -100,12 +103,8 @@ export async function gscPage(container, { site, alive, refreshCount }) {
     }
   }
 
-  async function loadPerformance() {
-    performance = await api(`${base}/performance`, {
-      query: { ...range(), interval: RANGES.find((item) => item.days === view.days).interval || "day", device: view.device },
-    });
-    if (!alive()) return;
-    if (!endDay) endDay = performance.end;
+  function showPerformance(report) {
+    performance = report;
     const missing = performance.days_in_range - performance.days_covered;
     chartNote.textContent = missing > 0
       ? `دادهٔ ${fmt.int(missing)} روز از این بازه هنوز دریافت نشده است؛ عددها فقط روزهای موجود را نشان می‌دهند.`
@@ -121,11 +120,11 @@ export async function gscPage(container, { site, alive, refreshCount }) {
       h("button", {
         class: sorted ? "sorted" : "", type: "button",
         text: `${label}${sorted ? (view.order === "asc" ? " ▲" : " ▼") : ""}`,
-        onclick: () => {
-          if (view.sort === key) view.order = view.order === "asc" ? "desc" : "asc";
-          else { view.sort = key; view.order = key === "position" ? "asc" : "desc"; }
-          loadTable();
-        },
+        onclick: () => load({
+          changes: sorted
+            ? { order: view.order === "asc" ? "desc" : "asc" }
+            : { sort: key, order: key === "position" ? "asc" : "desc" },
+        }),
       }));
   }
 
@@ -197,7 +196,7 @@ export async function gscPage(container, { site, alive, refreshCount }) {
       ? h("td", { class: "page-cell", title: item.key },
           h("button", {
             class: "btn-link", type: "button", text: readableUrl(item.key),
-            onclick: () => { view.page = item.key; view.tab = "queries"; view.contains = ""; loadTable(); },
+            onclick: () => load({ changes: { page: item.key, tab: "queries", contains: "" } }),
           }))
       : h("td", { class: "query-cell", text: item.key });
     let action = null;
@@ -227,15 +226,16 @@ export async function gscPage(container, { site, alive, refreshCount }) {
       class: "search-box", type: "search", value: view.contains, "aria-label": "جستجو در جدول",
       placeholder: isPages ? "جستجوی آدرس صفحه…" : "جستجوی کلمه…",
       oninput: (event) => {
-        view.contains = event.target.value;
+        pending.contains = event.target.value;
+        loadToken += 1;  // whatever is on its way is for the words before these
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(() => loadTable({ keepFocus: true }), 350);
+        searchTimer = setTimeout(() => load({ keepFocus: true }), 350);
       },
     });
     const tabs = h("div", { class: "filters-group" },
       [["queries", "کلمات کلیدی"], ["pages", "صفحه‌ها"]].map(([id, label]) => h("button", {
         class: `filter-btn${view.tab === id ? " active" : ""}`, type: "button", text: label,
-        onclick: () => { view.tab = id; view.contains = ""; if (id === "pages") view.page = null; loadTable(); },
+        onclick: () => load({ changes: { tab: id, contains: "", ...(id === "pages" ? { page: null } : {}) } }),
       })),
     );
     const crumb = view.page && !isPages
@@ -244,7 +244,7 @@ export async function gscPage(container, { site, alive, refreshCount }) {
           h("strong", { class: "ltr", title: view.page, text: readableUrl(view.page) }),
           h("button", {
             class: "btn-link", type: "button", text: "همهٔ صفحه‌ها",
-            onclick: () => { view.page = null; loadTable(); },
+            onclick: () => load({ changes: { page: null } }),
           }))
       : (!isPages
         ? h("div", { class: "crumb muted", text: "برای گرفتن پیشنهاد عنوان، از تب صفحه‌ها یک صفحه را باز کنید و کلمهٔ مورد نظر را تحلیل کنید." })
@@ -269,80 +269,93 @@ export async function gscPage(container, { site, alive, refreshCount }) {
       view.nextOffset !== null
         ? h("div", { class: "table-foot" }, h("button", {
             class: "btn", type: "button", text: "نمایش بیشتر",
-            onclick: () => loadTable({ more: true }),
+            onclick: () => load({ more: true }),
           }))
         : null,
     ));
     return search;
   }
 
-  async function loadTable({ more = false, keepFocus = false } = {}) {
-    const token = ++tableToken;
-    const offset = more ? view.nextOffset : 0;
-    let report;
+  // Every way of changing what is shown comes through here. Only the newest
+  // request counts, and it carries whatever the ones it overtook were asking for.
+  async function load({ changes = {}, more = false, withChart = false, keepFocus = false } = {}) {
+    const token = ++loadToken;
+    const current = () => alive() && token === loadToken;
+    clearTimeout(searchTimer);
+    Object.assign(pending, changes);
+    chartPending ||= withChart;
+    const wanted = { ...view, ...pending };
+    const append = more && !chartPending && Object.keys(pending).length === 0;
+    drawFilters(wanted);
+    loadNotice.className = "hidden";
     try {
-      report = await api(`${base}/performance/${view.tab}`, {
+      const fetchChart = () => api(`${base}/performance`, {
+        query: { ...range(wanted), interval: RANGES.find((item) => item.days === wanted.days).interval || "day", device: wanted.device },
+      });
+      let chartReport = chartPending ? await fetchChart() : null;
+      if (!current()) return;
+      if (chartReport && !endDay) {
+        // Not knowing the last day, the first request got the server's default
+        // range, which may not be the one asked for by now.
+        endDay = chartReport.end;
+        if (chartReport.days_in_range !== wanted.days) chartReport = await fetchChart();
+        if (!current()) return;
+      }
+      const report = await api(`${base}/performance/${wanted.tab}`, {
         query: {
-          ...range(), device: view.device, sort: view.sort, order: view.order, limit: PAGE_SIZE, offset,
-          compare: "previous", contains: view.contains.trim(),
-          page: view.tab === "queries" ? view.page : null,
+          ...range(wanted), device: wanted.device, sort: wanted.sort, order: wanted.order, limit: PAGE_SIZE,
+          offset: append ? view.nextOffset : 0, compare: "previous", contains: wanted.contains.trim(),
+          page: wanted.tab === "queries" ? wanted.page : null,
         },
       });
-    } catch (error) {
-      // Above the table, which stays: a passing failure must not take the
-      // tabs, the search box and the rows already loaded with it.
-      if (alive() && token === tableToken) {
-        runNotice.className = "notice notice-error";
-        runNotice.textContent = messageFor(error);
+      if (!current()) return;
+      Object.assign(view, pending);
+      pending = {};
+      chartPending = false;
+      if (chartReport) showPerformance(chartReport);
+      view.report = report;
+      view.rows = append ? [...view.rows, ...report.rows] : report.rows;
+      view.nextOffset = report.next_offset;
+      const search = drawTable();
+      if (keepFocus) {
+        search.focus();
+        search.setSelectionRange(search.value.length, search.value.length);
       }
-      return;
-    }
-    if (!alive() || token !== tableToken) return;
-    view.report = report;
-    view.rows = more ? [...view.rows, ...report.rows] : report.rows;
-    view.nextOffset = report.next_offset;
-    const search = drawTable();
-    if (keepFocus) {
-      search.focus();
-      search.setSelectionRange(search.value.length, search.value.length);
+    } catch (error) {
+      if (!current()) return;
+      const retry = { changes: pending, more, withChart: chartPending };
+      pending = {};
+      chartPending = false;
+      drawFilters(view);
+      loadNotice.className = "notice notice-error";
+      loadNotice.replaceChildren(`${messageFor(error)} `,
+        h("button", { class: "btn-link", type: "button", text: "تلاش دوباره", onclick: () => load(retry) }));
     }
   }
 
   const rangeButtons = h("div", { class: "filters-group", role: "group", "aria-label": "بازهٔ زمانی" });
   const deviceButtons = h("div", { class: "filters-group", role: "group", "aria-label": "دستگاه" });
 
-  function drawFilters() {
+  function drawFilters(shown) {
     clear(rangeButtons);
     for (const item of RANGES) {
       rangeButtons.append(h("button", {
-        class: `filter-btn${view.days === item.days ? " active" : ""}`, type: "button", text: item.label,
-        "aria-pressed": String(view.days === item.days),
-        onclick: () => { view.days = item.days; refreshAll(); },
+        class: `filter-btn${shown.days === item.days ? " active" : ""}`, type: "button", text: item.label,
+        "aria-pressed": String(shown.days === item.days),
+        onclick: () => load({ changes: { days: item.days }, withChart: true }),
       }));
     }
     clear(deviceButtons);
     for (const item of DEVICES) {
       deviceButtons.append(h("button", {
-        class: `filter-btn${view.device === item.value ? " active" : ""}`, type: "button", text: item.label,
-        "aria-pressed": String(view.device === item.value),
-        onclick: () => { view.device = item.value; refreshAll(); },
+        class: `filter-btn${shown.device === item.value ? " active" : ""}`, type: "button", text: item.label,
+        "aria-pressed": String(shown.device === item.value),
+        onclick: () => load({ changes: { device: item.value }, withChart: true }),
       }));
     }
   }
 
-  async function refreshAll() {
-    drawFilters();
-    try {
-      await loadPerformance();
-      await loadTable();
-    } catch (error) {
-      if (alive()) {
-        clear(tableArea).append(h("div", { class: "notice notice-error", role: "alert", text: messageFor(error) }));
-      }
-    }
-  }
-
-  drawFilters();
+  drawFilters(view);
   drawKpis();
   container.append(
     h("div", { class: "page-header" },
@@ -354,7 +367,7 @@ export async function gscPage(container, { site, alive, refreshCount }) {
     ),
     syncNote, kpis,
     h("section", { class: "chart-card" }, chart, chartNote),
-    runNotice, tableArea,
+    runNotice, loadNotice, tableArea,
   );
 
   const sync = await api(`${base}/sync`).catch(() => null);
@@ -366,7 +379,7 @@ export async function gscPage(container, { site, alive, refreshCount }) {
     syncNote.textContent = "گوگل به درخواست‌های اخیر جواب نداده است؛ به‌طور خودکار دوباره تلاش می‌شود. اگر ادامه داشت، حساب گوگل را در تنظیمات پروژه دوباره وصل کنید.";
     syncNote.classList.remove("hidden");
   }
-  await refreshAll();
+  await load({ withChart: true });
 
   // The chart's width is measured, so a resized window redraws it.
   let resizeTimer = null;
