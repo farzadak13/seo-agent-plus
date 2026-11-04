@@ -87,6 +87,18 @@ class RuntimeConfig(BaseModel):
     measurement_settle_days: int = Field(default=7, ge=0, le=60)
     measurement_deadline_days: int = Field(default=14, ge=0, le=180)
 
+    # Sign-up with a mobile number and a code by SMS. "log" writes the code to
+    # the log instead of sending it, for a developer's machine only.
+    signup_enabled: bool = False
+    sms_mode: str = Field(default="none", pattern=r"^(none|smsir|log)$")
+    sms_api_key_ref: str | None = Field(default=None, repr=False)
+    sms_template_id: int | None = Field(default=None, ge=1)
+    # Paying for a plan. The merchant id is a secret like any key.
+    billing_mode: str = Field(default="none", pattern=r"^(none|zarinpal|zarinpal_sandbox)$")
+    zarinpal_merchant_ref: str | None = Field(default=None, repr=False)
+    # "starter=490000,growth=1290000,pro=2990000", tomans a month (app.billing.plans).
+    plan_prices: str | None = None
+
     @field_validator("api_key")
     @classmethod
     def valid_key(cls, value):
@@ -107,8 +119,10 @@ class RuntimeConfig(BaseModel):
 
     @model_validator(mode="after")
     def google_sign_in_is_fully_configured(self):
+        # The public address is also where the payment gateway sends customers
+        # back, so it may be set without Google; Google needs all three.
         values = (self.google_oauth_client_id, self.google_oauth_client_secret, self.public_base_url)
-        if any(values) and not all(values):
+        if (self.google_oauth_client_id or self.google_oauth_client_secret) and not all(values):
             raise ValueError(
                 "Google sign-in needs SEO_AGENT_GOOGLE_OAUTH_CLIENT_ID, "
                 "SEO_AGENT_GOOGLE_OAUTH_CLIENT_SECRET and SEO_AGENT_PUBLIC_BASE_URL together."
@@ -151,6 +165,27 @@ class RuntimeConfig(BaseModel):
             raise ValueError(
                 "SEO_AGENT_SEOSIGNAL_API_KEY_REF is required when SEO_AGENT_KEYWORD_PROVIDER is 'seosignal'."
             )
+        return self
+
+    @model_validator(mode="after")
+    def signup_and_billing_are_fully_configured(self):
+        if self.signup_enabled and self.sms_mode == "none":
+            raise ValueError("SEO_AGENT_SIGNUP_ENABLED needs SEO_AGENT_SMS_MODE: the code is how a number is proved.")
+        production = self.environment.strip().lower() == "production"
+        if self.sms_mode == "log" and production:
+            raise ValueError("SEO_AGENT_SMS_MODE=log writes codes to the log; production must send them.")
+        if self.sms_mode == "smsir" and (not self.sms_api_key_ref or self.sms_template_id is None):
+            raise ValueError("SEO_AGENT_SMS_MODE=smsir needs SEO_AGENT_SMS_API_KEY_REF and SEO_AGENT_SMS_TEMPLATE_ID.")
+        if self.billing_mode != "none":
+            if not self.zarinpal_merchant_ref:
+                raise ValueError("SEO_AGENT_ZARINPAL_MERCHANT_REF is required when SEO_AGENT_BILLING_MODE is set.")
+            if not self.public_base_url:
+                raise ValueError("SEO_AGENT_PUBLIC_BASE_URL is required for the gateway to send the customer back.")
+        if self.billing_mode == "zarinpal_sandbox" and production:
+            raise ValueError("SEO_AGENT_BILLING_MODE=zarinpal_sandbox takes no real money; production must use zarinpal.")
+        from app.billing.plans import parse_prices
+
+        parse_prices(self.plan_prices)  # a wrong price stops startup, not a payment
         return self
 
     @property
@@ -257,6 +292,13 @@ class RuntimeConfig(BaseModel):
             measurement_window_days=int(os.getenv("SEO_AGENT_MEASUREMENT_WINDOW_DAYS", "28")),
             measurement_settle_days=int(os.getenv("SEO_AGENT_MEASUREMENT_SETTLE_DAYS", "7")),
             measurement_deadline_days=int(os.getenv("SEO_AGENT_MEASUREMENT_DEADLINE_DAYS", "14")),
+            signup_enabled=_env_bool("SEO_AGENT_SIGNUP_ENABLED", False),
+            sms_mode=os.getenv("SEO_AGENT_SMS_MODE", "none").strip().lower() or "none",
+            sms_api_key_ref=_env_optional("SEO_AGENT_SMS_API_KEY_REF"),
+            sms_template_id=int(os.environ["SEO_AGENT_SMS_TEMPLATE_ID"]) if _env_optional("SEO_AGENT_SMS_TEMPLATE_ID") else None,
+            billing_mode=os.getenv("SEO_AGENT_BILLING_MODE", "none").strip().lower() or "none",
+            zarinpal_merchant_ref=_env_optional("SEO_AGENT_ZARINPAL_MERCHANT_REF"),
+            plan_prices=_env_optional("SEO_AGENT_PLAN_PRICES"),
         )
 
 

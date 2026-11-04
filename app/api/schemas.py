@@ -317,7 +317,8 @@ class SignedIn(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    email: str
+    email: str | None
+    mobile: str | None = None
     tenant_id: str
     tenant_name: str
     method: LoginMethod

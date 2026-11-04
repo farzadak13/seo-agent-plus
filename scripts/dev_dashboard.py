@@ -72,6 +72,11 @@ from app.scan.store import SiteFileStore, SiteScanStore  # noqa: E402
 from app.reasoning.keywords import KeywordSuggester  # noqa: E402
 from app.targets.handler import TARGET_SUGGEST_JOB_TYPE, build_target_suggestion_handler  # noqa: E402
 from app.targets.store import TargetKeywordStore  # noqa: E402
+from app.accounts.otp import OtpService  # noqa: E402
+from app.billing.plans import catalog  # noqa: E402
+from app.billing.service import Billing  # noqa: E402
+from app.billing.store import PaymentStore, SubscriptionStore  # noqa: E402
+from app.notify.sms import LogSender  # noqa: E402
 from app.tenancy.store import TenantStore  # noqa: E402
 from app.warehouse.models import (  # noqa: E402
     MetricValues,
@@ -533,6 +538,12 @@ def build():
             for url in ("sc-domain:shop.example.com", "sc-domain:next.example.com")
         ],
         warehouse=warehouse, warehouse_reports=reports, auth=auth, scan_store=scans, file_store=files, target_store=targets,
+        # Sign-up works here with the code written to this server's log, not sent.
+        otp=OtpService(repository=repository, sender=LogSender()), signup_enabled=True,
+        billing=Billing(
+            subscriptions=SubscriptionStore(repository), payments=PaymentStore(repository),
+            plans=catalog(), gateway=None, callback_url=None,
+        ),
         dashboard_url="/app/", tenant_name=lambda _tenant: "فروشگاه نمونه (توسعه)",
     ))
 

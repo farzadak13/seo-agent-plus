@@ -1,16 +1,16 @@
 """People who sign in to the dashboard, and their sessions.
 
 An account belongs to one tenant: signing in is acting as that tenant, with
-the same ownership checks an API key gets. Accounts are created by the
-operator (there is no open sign-up yet). An account may have a password, a
-linked Google identity, or both.
+the same ownership checks an API key gets. An account is created by the
+operator (email, password, Google) or by the person signing up with their
+mobile number, proved by a code sent to it.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _now() -> datetime:
@@ -27,8 +27,12 @@ class Account(BaseModel):
 
     account_id: str = Field(min_length=1, max_length=64)
     tenant_id: str = Field(min_length=1, max_length=64)
-    # Lower-cased and trimmed; the key accounts are found by.
-    email: str = Field(min_length=3, max_length=254)
+    # Lower-cased and trimmed; one of the keys accounts are found by. None for
+    # an account that signed up with its mobile number.
+    email: str | None = Field(default=None, min_length=3, max_length=254)
+    # 09XXXXXXXXX (app.accounts.phone); the other key.
+    mobile: str | None = Field(default=None, pattern=r"^09[0-9]{9}$")
+    terms_accepted_at: datetime | None = None
     status: AccountStatus = AccountStatus.ACTIVE
     # "scrypt$..." or None for an account that signs in with Google only.
     password_hash: str | None = Field(default=None, repr=False)
@@ -51,10 +55,17 @@ class Account(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
     last_login_at: datetime | None = None
 
+    @model_validator(mode="after")
+    def found_by_something(self):
+        if self.email is None and self.mobile is None:
+            raise ValueError("An account needs an email or a mobile number.")
+        return self
+
 
 class LoginMethod(StrEnum):
     PASSWORD = "password"
     GOOGLE = "google"
+    SMS = "sms"
 
 
 class Session(BaseModel):

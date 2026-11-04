@@ -457,3 +457,36 @@ code.block {
 .target-add { margin-top: 1rem; display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.5rem; align-items: center; }
 .target-add > .small { grid-column: 1 / -1; }
 @media (max-width: 640px) { .target-add { grid-template-columns: 1fr; } }
+
+/* Sign-up by mobile */
+.check-line { display: flex; align-items: center; gap: 0.4rem; font-size: 0.88rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.check-line input { width: 1.05rem; height: 1.05rem; accent-color: var(--onyx-black); }
+.auth form .code-links { margin-top: 0.75rem; }
+.email-login { margin-top: 1.25rem; }
+.email-login summary { cursor: pointer; margin-bottom: 0.75rem; }
+
+/* The plan, above every page while it needs attention */
+.plan-notice {
+  margin: 0 1.5rem; padding: 0.55rem 0.9rem; border-radius: 10px; font-size: 0.9rem;
+  background: var(--warn-soft); color: var(--warn); border: 1px solid rgba(245, 158, 11, 0.25);
+}
+.plan-notice a { color: inherit; font-weight: 700; }
+.plan-notice-ended { background: rgba(185, 28, 28, 0.06); color: var(--bad); border-color: rgba(185, 28, 28, 0.2); }
+
+/* اشتراک */
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.25rem; }
+.plan-card { border: 1px solid var(--border-light); border-radius: 16px; padding: 1.25rem; background: var(--bg-card); display: grid; gap: 0.75rem; align-content: start; }
+.plan-current { border-color: var(--gold-main); box-shadow: 0 0 0 1px var(--gold-main); }
+.plan-name { font-weight: 800; font-size: 1.05rem; }
+.plan-price { font-size: 1.3rem; font-weight: 800; }
+.plan-features { margin: 0; padding-right: 1.1rem; display: grid; gap: 0.3rem; font-size: 0.9rem; }
+
+/* The first steps of a new account */
+.start-steps { list-style: none; margin: 0 0 1.25rem; padding: 0; display: grid; gap: 0.9rem; }
+.start-step { display: flex; gap: 0.8rem; align-items: flex-start; }
+.start-step p { margin: 0.2rem 0 0; }
+.start-number {
+  flex: none; width: 1.9rem; height: 1.9rem; border-radius: 50%; display: grid; place-items: center;
+  background: var(--onyx-black); color: #fff; font-weight: 800; font-size: 0.9rem;
+}
+.code-links { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }

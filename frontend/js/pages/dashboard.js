@@ -5,9 +5,18 @@ import { h, fmt } from "../dom.js";
 import { SYNC_STATE, eventLabel, OUTCOME_EVENTS, BAD_EVENTS, QUIET_EVENTS, needsYou, statusLabel } from "../labels.js";
 import { loadActions } from "./actions.js";
 
+// The first thing a new account sees: three steps, the first one a button.
 export function noSiteYet() {
-  return h("div", { class: "card-panel empty" },
-    h("p", { text: "هنوز سایتی اضافه نکرده‌اید. اول سایتتان را اضافه و سرچ کنسول را وصل کنید." }),
+  const step = (number, title, text) => h("li", { class: "start-step" },
+    h("span", { class: "start-number", text: number }),
+    h("div", {}, h("strong", { text: title }), h("p", { class: "small muted", text })));
+  return h("div", { class: "card-panel" },
+    h("div", { class: "panel-title", text: "شروع کار در سه قدم" }),
+    h("ol", { class: "start-steps" },
+      step("۱", "سایتتان را اضافه کنید", "فقط آدرس سایت لازم است."),
+      step("۲", "سایت را بررسی کنید", "robots.txt، نقشهٔ سایت و صفحه‌ها را می‌خوانیم و مشکل‌ها را می‌گوییم. برای سایت تازه، کلمه‌های هدف را هم همان‌جا انتخاب می‌کنید."),
+      step("۳", "سرچ کنسول و سایت را وصل کنید", "تا پیشنهادها از دادهٔ واقعی گوگل بیایند و تغییرهای تأییدشده روی سایت اعمال شوند. این قدم را بعداً هم می‌توانید بردارید."),
+    ),
     h("a", { class: "btn btn-primary", href: "#/settings", text: "افزودن سایت" }),
   );
 }

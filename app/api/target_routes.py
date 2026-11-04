@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.account_routes import require_plan
 from app.api.schemas import RunResponse
 from app.models.jobs import Job
 from app.models.runs import SEORun, SEORunStatus
@@ -149,6 +150,7 @@ def register_target_routes(app: FastAPI, dependencies, *, principal_id: Callable
     @app.post("/v1/sites/{site_id}/target-keywords/suggest", response_model=TargetKeywordSet, status_code=status.HTTP_202_ACCEPTED)
     def suggest(site_id: str, authenticated_principal_id: str = Depends(principal_id)) -> TargetKeywordSet:
         site = owned_site(site_id, authenticated_principal_id)
+        require_plan(dependencies, authenticated_principal_id)
         if not pages_of(site_id):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The scan found no page to suggest words for.")
         keywords, version = targets().read_or_new(site)
@@ -182,6 +184,7 @@ def register_target_routes(app: FastAPI, dependencies, *, principal_id: Callable
     def add_keyword(site_id: str, request: KeywordRequest, authenticated_principal_id: str = Depends(principal_id)) -> TargetKeywordSet:
         """A word the customer types in, for a page the scan read (the home page if none is named)."""
         site = owned_site(site_id, authenticated_principal_id)
+        require_plan(dependencies, authenticated_principal_id)
         pages = pages_of(site_id)
         word = normalize_query(request.keyword)
         if not word or len(word) > 80:
@@ -225,6 +228,7 @@ def register_target_routes(app: FastAPI, dependencies, *, principal_id: Callable
     def propose_title(site_id: str, request: KeywordRequest, authenticated_principal_id: str = Depends(principal_id)) -> RunResponse:
         """A title for the page this word is for, compared with Google's results, waiting for approval."""
         site = owned_site(site_id, authenticated_principal_id)
+        require_plan(dependencies, authenticated_principal_id)
         if site.site_adapter is None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Connect the site first, so its page can be read and changed.")
         if dependencies.run_store is None:

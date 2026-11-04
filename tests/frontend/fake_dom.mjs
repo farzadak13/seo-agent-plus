@@ -51,7 +51,7 @@ export class FakeElement extends FakeNode {
   focus() { this.focused = true; }
   setSelectionRange() {}
   dispatch(type) {
-    for (const listener of this.listeners[type] || []) listener({ target: this });
+    for (const listener of this.listeners[type] || []) listener({ target: this, preventDefault() {} });
   }
   click() { this.dispatch("click"); }
 }

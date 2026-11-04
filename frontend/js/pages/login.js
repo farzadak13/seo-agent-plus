@@ -1,7 +1,7 @@
 // The owner's split sign-in page. Google first: it is also how Search Console gets connected.
 
 import { api, messageFor } from "../api.js";
-import { h, s } from "../dom.js";
+import { h, s, fmt } from "../dom.js";
 
 function googleIcon() {
   const paths = [
@@ -14,11 +14,130 @@ function googleIcon() {
     paths.map(([fill, d]) => s("path", { fill, d })));
 }
 
+// Sign-in and sign-up are one form: a number, a code, and for a new number the
+// business name and the terms. Which one it was, only the code's holder learns.
+function mobileForm({ onSignedIn, problem }) {
+  const mobile = h("input", {
+    class: "input ltr", id: "mobile", type: "tel", inputMode: "numeric", required: true,
+    autocomplete: "tel", placeholder: "09123456789", maxLength: 20,
+  });
+  const code = h("input", {
+    class: "input ltr", id: "code", inputMode: "numeric", autocomplete: "one-time-code",
+    placeholder: "------", maxLength: 6,
+  });
+  const business = h("input", { class: "input", id: "business", maxLength: 200, placeholder: "مثلاً فروشگاه کفش آریا" });
+  const terms = h("input", { type: "checkbox", id: "terms" });
+  const codeField = h("div", { class: "field hidden" }, h("label", { for: "code", text: "کد تأیید" }), code);
+  const signupFields = h("div", { class: "hidden" },
+    h("p", { class: "small muted", text: "این شماره هنوز حساب ندارد. با تکمیل این دو مورد حسابتان ساخته می‌شود و ۷ روز رایگان از هوشیار سئو استفاده می‌کنید." }),
+    h("div", { class: "field" }, h("label", { for: "business", text: "نام کسب‌وکار" }), business),
+    h("label", { class: "check-line" }, terms, " ",
+      h("a", { href: "/terms.html", target: "_blank", rel: "noopener", text: "قوانین و شرایط استفاده" }), " را خواندم و می‌پذیرم"),
+  );
+  const resend = h("button", { class: "btn-link hidden", type: "button", text: "ارسال دوباره" });
+  // A number typed wrong: back to the first step.
+  const change = h("button", {
+    class: "btn-link hidden", type: "button", text: "تغییر شماره",
+    onclick: () => {
+      clearInterval(timer);
+      step = "mobile";
+      mobile.disabled = false;
+      code.value = "";
+      codeField.classList.add("hidden");
+      signupFields.classList.add("hidden");
+      resend.classList.add("hidden");
+      change.classList.add("hidden");
+      submit.textContent = "دریافت کد";
+      mobile.focus();
+    },
+  });
+  const submit = h("button", { class: "btn btn-primary btn-submit", type: "submit", text: "دریافت کد" });
+  let step = "mobile";
+  let timer = null;
+
+  const fail = (error) => {
+    problem.textContent = messageFor(error);
+    problem.classList.remove("hidden");
+  };
+  const countdown = (seconds) => {
+    clearInterval(timer);
+    let left = seconds;
+    resend.classList.remove("hidden");
+    resend.disabled = true;
+    resend.textContent = `ارسال دوباره تا ${fmt.int(left)} ثانیهٔ دیگر`;
+    timer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) {
+        clearInterval(timer);
+        resend.disabled = false;
+        resend.textContent = "ارسال دوباره";
+      } else {
+        resend.textContent = `ارسال دوباره تا ${fmt.int(left)} ثانیهٔ دیگر`;
+      }
+    }, 1000);
+  };
+  const sendCode = async () => {
+    problem.classList.add("hidden");
+    await api("/v1/auth/mobile/code", { method: "POST", quiet: true, body: { mobile: mobile.value } });
+    step = "code";
+    mobile.disabled = true;
+    change.classList.remove("hidden");
+    codeField.classList.remove("hidden");
+    submit.textContent = "ورود";
+    code.focus();
+    countdown(60);
+  };
+  resend.onclick = async () => {
+    try { await sendCode(); } catch (error) { fail(error); }
+  };
+
+  return h("form", {
+    onsubmit: async (event) => {
+      event.preventDefault();
+      problem.classList.add("hidden");
+      submit.disabled = true;
+      try {
+        if (step === "mobile") {
+          await sendCode();
+          return;
+        }
+        if (step === "signup" && (!business.value.trim() || !terms.checked)) {
+          problem.textContent = "نام کسب‌وکار را بنویسید و قوانین را بپذیرید.";
+          problem.classList.remove("hidden");
+          return;
+        }
+        const body = { mobile: mobile.value, code: code.value };
+        if (step === "signup") Object.assign(body, { business_name: business.value.trim(), accept_terms: true });
+        const answer = await api("/v1/auth/mobile/verify", { method: "POST", quiet: true, body });
+        if (answer?.status === "needs_signup") {
+          step = "signup";
+          signupFields.classList.remove("hidden");
+          submit.textContent = "ساخت حساب و ورود";
+          business.focus();
+          return;
+        }
+        clearInterval(timer);
+        await onSignedIn();
+      } catch (error) {
+        fail(error);
+      } finally {
+        submit.disabled = false;
+      }
+    },
+  },
+    h("div", { class: "field" }, h("label", { for: "mobile", text: "شمارهٔ موبایل" }), mobile),
+    codeField,
+    signupFields,
+    submit,
+    h("div", { class: "code-links" }, resend, change),
+  );
+}
+
 export function loginPage({ onSignedIn }) {
   const problem = h("div", { class: "notice notice-error hidden", role: "alert" });
   const email = h("input", { class: "input ltr", id: "email", type: "email", required: true, autocomplete: "username", placeholder: "name@company.com" });
   const password = h("input", { class: "input ltr", id: "password", type: "password", required: true, autocomplete: "current-password", placeholder: "••••••••" });
-  const submit = h("button", { class: "btn btn-primary btn-submit", type: "submit", text: "ورود به پلتفرم" });
+  const submit = h("button", { class: "btn btn-primary btn-submit", type: "submit", text: "ورود با ایمیل" });
 
   const form = h("form", {
     onsubmit: async (event) => {
@@ -37,7 +156,7 @@ export function loginPage({ onSignedIn }) {
         problem.textContent = messageFor(error);
         problem.classList.remove("hidden");
         submit.disabled = false;
-        submit.textContent = "ورود به پلتفرم";
+        submit.textContent = "ورود با ایمیل";
       }
     },
   },
@@ -51,13 +170,17 @@ export function loginPage({ onSignedIn }) {
       h("div", { class: "auth-wrapper" },
         h("div", { class: "brand-mobile" }, h("span", { class: "gold-text", text: "✦" }), " هوشیار سئو"),
         h("div", { class: "auth-header" },
-          h("h1", { text: "ورود به حساب" }),
-          h("p", { text: "برای مدیریت پروژه‌های سئو وارد شوید." }),
+          h("h1", { text: "ورود یا ثبت‌نام" }),
+          h("p", { text: "با شمارهٔ موبایل وارد شوید؛ اگر حساب ندارید، همین‌جا ساخته می‌شود." }),
         ),
         problem,
-        h("a", { class: "btn btn-google", href: "/v1/auth/google/start" }, googleIcon(), "ورود امن با حساب گوگل"),
-        h("div", { class: "divider", text: "یا ورود با ایمیل" }),
-        form,
+        mobileForm({ onSignedIn, problem }),
+        h("div", { class: "divider", text: "یا" }),
+        h("a", { class: "btn btn-google", href: "/v1/auth/google/start" }, googleIcon(), "ورود با حساب گوگل"),
+        h("details", { class: "email-login" },
+          h("summary", { class: "small muted", text: "ورود با ایمیل و رمز عبور" }),
+          form,
+        ),
       ),
     ),
     h("section", { class: "showcase", "aria-hidden": "true" },

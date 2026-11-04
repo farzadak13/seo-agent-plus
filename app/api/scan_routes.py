@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 
+from app.api.account_routes import require_plan
 from app.models.jobs import Job
 from app.models.site_files import SiteFileChange, SiteFileKind, SiteFileStatus
 from app.models.site_scan import ScanStatus, SiteScan
@@ -61,6 +62,7 @@ def register_scan_routes(app: FastAPI, dependencies, *, principal_id: Callable, 
     @app.post("/v1/sites/{site_id}/scans", response_model=SiteScan, status_code=status.HTTP_202_ACCEPTED)
     def start_scan(site_id: str, authenticated_principal_id: str = Depends(principal_id)) -> SiteScan:
         site = owned_site(site_id, authenticated_principal_id)
+        require_plan(dependencies, authenticated_principal_id)
         base_url = str(site.base_url)
         if urlsplit(base_url).port not in _WEB_PORTS:
             raise HTTPException(status_code=422, detail="Only sites on the usual web ports can be scanned.")

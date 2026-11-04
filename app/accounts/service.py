@@ -33,7 +33,7 @@ from app.accounts.store import (
     SessionStore,
     normalize_email,
 )
-from app.models.tenants import TenantStatus
+from app.models.tenants import Tenant, TenantStatus
 from app.persistence.contracts import PersistenceConflictError
 from app.tenancy.store import TenantStore
 
@@ -44,6 +44,7 @@ TOUCH_EVERY = timedelta(minutes=10)
 
 GENERIC_REFUSAL = "The email or password is not correct."
 GOOGLE_REFUSAL = "There is no HoshyarSEO account for this Google account."
+MOBILE_REFUSAL = "This account cannot sign in."
 # Said only to someone who has just proved who they are.
 SUSPENDED = "This account is suspended. Contact HoshyarSEO support."
 
@@ -257,6 +258,32 @@ class AuthService:
             still_valid=lambda current: current.google_subject == subject,
         )
 
+    def account_for_mobile(self, mobile: str) -> Account | None:
+        return self._accounts.by_mobile(mobile)
+
+    def sign_in_with_mobile(self, *, mobile: str) -> tuple[str, Session]:
+        """For a number whose code was just checked (app.accounts.otp); never call it before."""
+        account = self._accounts.by_mobile(mobile)
+        if account is None or account.status != AccountStatus.ACTIVE:
+            raise SignInError(MOBILE_REFUSAL)
+        return self._open(account, LoginMethod.SMS, still_valid=lambda current: current.mobile == mobile)
+
+    def sign_up_with_mobile(self, *, mobile: str, business_name: str) -> tuple[Account, Tenant]:
+        """A new tenant and its one account, for a number whose code was just checked.
+
+        The tenant is written first: an account must never point at a tenant
+        that does not exist. A number that already has an account is refused
+        by the account's own index, whatever runs at the same time.
+        """
+        now = self._clock()
+        tenant = self._tenants.create(
+            Tenant(tenant_id=f"t-{secrets.token_hex(8)}", name=business_name.strip()[:200] or mobile, created_at=now, updated_at=now)
+        )
+        account = self._accounts.create(
+            Account(account_id="u-" + secrets.token_hex(8), tenant_id=tenant.tenant_id, mobile=mobile, terms_accepted_at=now, created_at=now, updated_at=now)
+        )
+        return account, tenant
+
     def _open(
         self, account: Account, method: LoginMethod, *, still_valid: Callable[[Account], bool]
     ) -> tuple[str, Session]:
@@ -292,7 +319,9 @@ class AuthService:
             or not still_valid(current)
         ):
             self._sessions.replace(session.model_copy(update={"revoked_at": now}), expected_version=1)
-            raise SignInError(GENERIC_REFUSAL if method == LoginMethod.PASSWORD else GOOGLE_REFUSAL)
+            raise SignInError(
+                {LoginMethod.PASSWORD: GENERIC_REFUSAL, LoginMethod.GOOGLE: GOOGLE_REFUSAL}.get(method, MOBILE_REFUSAL)
+            )
         try:
             self._accounts.update(current.model_copy(update={"last_login_at": now}))
         except AccountChangedError:

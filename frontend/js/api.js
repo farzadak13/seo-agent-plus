@@ -47,6 +47,21 @@ export async function api(path, { method = "GET", body, query, quiet = false } =
 // not listed falls back to a plain sentence for its status, never to raw text.
 const KNOWN = [
   ["Too many sites scanned", "امروز سایت‌های زیادی بررسی شده است. فردا دوباره امتحان کنید."],
+  ["Too many codes sent to this number", "امروز کدهای زیادی به این شماره فرستاده شده است. فردا دوباره امتحان کنید."],
+  ["Too many codes requested", "درخواست کد زیاد بوده است. کمی بعد دوباره امتحان کنید."],
+  ["Too many tries", "تلاش‌ها زیاد بوده است. کمی بعد دوباره امتحان کنید."],
+  ["A code was sent a moment ago", "کد همین الان فرستاده شد. کمی صبر کنید و بعد دوباره درخواست کنید."],
+  ["not an Iranian mobile number", "شمارهٔ موبایل درست نیست. مثلاً ۰۹۱۲۳۴۵۶۷۸۹ را بنویسید."],
+  ["code is not correct or has expired", "کد درست نیست یا وقتش تمام شده است. دوباره امتحان کنید یا کد جدید بگیرید."],
+  ["code could not be sent", "پیامک فرستاده نشد. چند دقیقهٔ دیگر دوباره امتحان کنید."],
+  ["Sign-up is not open", "ثبت‌نام هنوز باز نشده است."],
+  ["Sign-in by mobile is not configured", "ورود با موبایل روی این سرور فعال نیست."],
+  ["This account cannot sign in", "این حساب نمی‌تواند وارد شود. با پشتیبانی تماس بگیرید."],
+  ["subscription has ended", "اشتراک شما تمام شده است. برای انجام کارهای جدید، از صفحهٔ «اشتراک» تمدید کنید."],
+  ["no room for another site", "پلن فعلی‌تان اجازهٔ افزودن سایت دیگری نمی‌دهد. از صفحهٔ «اشتراک» پلن بزرگ‌تری بگیرید."],
+  ["no plan to pay for", "این حساب محدودیت پلن ندارد و نیازی به خرید نیست."],
+  ["Online payment is not available", "پرداخت آنلاین هنوز فعال نشده است."],
+  ["payment gateway did not answer", "درگاه پرداخت جواب نداد. چند دقیقهٔ دیگر دوباره امتحان کنید."],
   ["Too many suggestions asked for today", "امروز به سقف پیشنهاد کلمه رسیده‌اید. فردا دوباره امتحان کنید."],
   ["Too many titles asked for today", "امروز به سقف پیشنهاد عنوان رسیده‌اید. فردا دوباره امتحان کنید."],
   ["email or password is not correct", "ایمیل یا رمز عبور درست نیست."],
@@ -98,6 +113,7 @@ export function messageFor(error) {
   if (error.status === 403) return "اجازهٔ این کار را ندارید. صفحه را تازه کنید و دوباره امتحان کنید.";
   if (error.status === 404) return "این مورد پیدا نشد.";
   if (error.status === 409) return "این کار الان ممکن نیست. وضعیت را بررسی کنید و دوباره امتحان کنید.";
+  if (error.status === 402) return "اشتراک شما اجازهٔ این کار را نمی‌دهد. صفحهٔ «اشتراک» را ببینید.";
   if (error.status === 422) return "اطلاعات واردشده معتبر نیست.";
   if (error.status === 429) return "درخواست‌ها زیاد بوده است. کمی بعد دوباره امتحان کنید.";
   if (error.status === 503) return "این بخش روی سرور فعال نیست.";

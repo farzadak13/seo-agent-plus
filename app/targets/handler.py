@@ -264,7 +264,10 @@ class RankTracker:
         serp_provider: SERPProvider,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         per_round: int = 50,
+        # A tenant whose subscription has ended is not looked up: each look is paid for.
+        active: Callable[[str], bool] = lambda tenant_id: True,
     ) -> None:
+        self._active = active
         self._targets = target_store
         self._sites = site_store
         self._serp = serp_provider
@@ -281,7 +284,7 @@ class RankTracker:
                 site = self._sites.get(keywords.site_id)
             except Exception:
                 continue
-            if _is_removed(site):
+            if _is_removed(site) or not self._active(keywords.tenant_id):
                 continue
             due = [
                 item

@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api import oauth_pages
 from app.api.auth import APIKeyAuthenticator
+from app.api.account_routes import register_account_routes, require_plan, require_site_room
 from app.api.scan_routes import register_scan_routes
 from app.api.target_routes import register_target_routes
 from app.action.approval import ApprovalError, approve, check_rollback, reject
@@ -142,7 +143,15 @@ class APIDependencies:
         scan_store=None,
         file_store=None,
         target_store=None,
+        billing=None,
+        otp=None,
+        signup_enabled: bool = False,
     ) -> None:
+        # None: no plans on this server, so nothing is limited by one.
+        self.billing = billing
+        # None: no sign-in by mobile number.
+        self.otp = otp
+        self.signup_enabled = signup_enabled
         # None: no site scans on this server.
         self.scan_store = scan_store
         self.file_store = file_store
@@ -385,6 +394,10 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         authenticated_principal_id: str = Depends(principal_id),
     ) -> SiteResponse:
         store = _require_site_store(dependencies)
+        require_site_room(
+            dependencies, authenticated_principal_id,
+            sum(1 for existing in store.list_for_tenant(authenticated_principal_id) if existing.status != SiteStatus.REMOVED),
+        )
         site = Site(
             site_id=dependencies.site_id_factory(),
             principal_id=authenticated_principal_id,
@@ -418,6 +431,11 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         return site
 
     register_scan_routes(app, dependencies, principal_id=principal_id, owned_site=owned_site)
+    register_account_routes(
+        app, dependencies, principal_id=principal_id, signed_in=_signed_in,
+        set_session_cookie=_set_session_cookie, require_own_origin=_require_own_origin,
+        session_cookie=SESSION_COOKIE,
+    )
     register_target_routes(app, dependencies, principal_id=principal_id, owned_site=owned_site)
 
     @app.delete("/v1/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -646,6 +664,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         authenticated_principal_id: str = Depends(principal_id),
     ) -> VolumeLookup:
         keywords = _require_keywords(dependencies)
+        require_plan(dependencies, authenticated_principal_id)
         try:
             return keywords.volumes_for(authenticated_principal_id).lookup(request.keywords)
         except KeywordProviderError as exc:
@@ -856,6 +875,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             )
         site = _get_site(dependencies, site_id)
         _ensure_owner(site.principal_id, authenticated_principal_id)
+        require_plan(dependencies, authenticated_principal_id)
         if site.gsc is None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -1085,6 +1105,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> ActionResponse:
         managed = _get_action(dependencies, action_id)
         _ensure_owner(managed.tenant_id, authenticated_principal_id)
+        require_plan(dependencies, authenticated_principal_id)
         site = _get_site(dependencies, managed.site_id)
         if site.site_adapter is None:
             raise HTTPException(
@@ -1261,6 +1282,7 @@ def _signed_in(dependencies: APIDependencies, session, account=None) -> "SignedI
         account = dependencies.auth.account(session.account_id)
     return SignedIn(
         email=account.email,
+        mobile=account.mobile,
         tenant_id=session.tenant_id,
         tenant_name=dependencies.tenant_name(session.tenant_id),
         method=session.method,

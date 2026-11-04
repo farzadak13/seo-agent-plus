@@ -19,6 +19,7 @@ from app.persistence.contracts import PersistenceConflictError, Repository
 
 ACCOUNT = "account"
 ACCOUNT_BY_EMAIL = "account_email"
+ACCOUNT_BY_MOBILE = "account_mobile"
 ACCOUNT_BY_GOOGLE = "account_google"
 SESSION = "session"
 
@@ -50,12 +51,26 @@ class AccountStore:
 
     def create(self, account: Account) -> Account:
         with self._transaction():
-            try:
-                self._repository.create(_index(ACCOUNT_BY_EMAIL, account.email, account.account_id, account.tenant_id))
-            except PersistenceConflictError:
-                raise AccountExistsError(f"An account with this email already exists: {account.email}") from None
+            # Each key is an index record whose id is the key: a second account
+            # with the same email or number is refused by the database itself.
+            if account.email is not None:
+                try:
+                    self._repository.create(_index(ACCOUNT_BY_EMAIL, account.email, account.account_id, account.tenant_id))
+                except PersistenceConflictError:
+                    raise AccountExistsError(f"An account with this email already exists: {account.email}") from None
+            if account.mobile is not None:
+                try:
+                    self._repository.create(_index(ACCOUNT_BY_MOBILE, account.mobile, account.account_id, account.tenant_id))
+                except PersistenceConflictError:
+                    raise AccountExistsError("An account with this mobile number already exists.") from None
             self._repository.create(_record(ACCOUNT, account.account_id, account, version=1))
         return account
+
+    def by_mobile(self, mobile: str) -> Account | None:
+        index = self._repository.get(aggregate_type=ACCOUNT_BY_MOBILE, aggregate_id=mobile)
+        if index is None or index.payload.get("account_id") is None:
+            return None
+        return self.get(index.payload["account_id"])
 
     def get(self, account_id: str) -> Account | None:
         record = self._repository.get(aggregate_type=ACCOUNT, aggregate_id=account_id)

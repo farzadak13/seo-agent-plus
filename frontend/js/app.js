@@ -8,6 +8,7 @@ import { inboxPage } from "./pages/inbox.js";
 import { gscPage } from "./pages/gsc.js";
 import { scanPage } from "./pages/scan.js";
 import { settingsPage } from "./pages/settings.js";
+import { billingPage } from "./pages/billing.js";
 import { loadActions } from "./pages/actions.js";
 import { needsYou } from "./labels.js";
 
@@ -24,12 +25,14 @@ const PAGES = [
   { path: "inbox", title: "صندوق تأیید", render: inboxPage, counted: true },
   { path: "gsc", title: "عملکرد سایت (GSC)", render: gscPage },
   { path: "settings", title: "تنظیمات پروژه", render: settingsPage },
+  { path: "billing", title: "اشتراک", render: billingPage },
 ];
 
 function currentRoute() {
-  const hash = window.location.hash.replace(/^#\/?/, "");
+  // "#/billing?payment=paid": the query is the page's, not part of its name.
+  const [hash, query = ""] = window.location.hash.replace(/^#\/?/, "").split("?");
   const [path, ...rest] = hash.split("/");
-  let param = null;
+  let param = query ? `?${query}` : null;
   if (rest.length) {
     try { param = decodeURIComponent(rest.join("/")); } catch { /* a broken link: the page without it */ }
   }
@@ -78,7 +81,8 @@ function buildShell() {
       renderRoute();
     },
   });
-  const initial = (state.me.email || "?").trim().charAt(0).toUpperCase();
+  const who = state.me.email || state.me.mobile || "";
+  const initial = (state.me.tenant_name || who || "?").trim().charAt(0).toUpperCase();
   const header = h("header", { class: "top-header" },
     h("div", { class: "top-start" },
       h("button", {
@@ -88,18 +92,37 @@ function buildShell() {
       siteSelect,
     ),
     h("div", { class: "user-menu" },
-      h("span", { class: "user-name", title: state.me.email, text: state.me.tenant_name || state.me.email }),
+      h("span", { class: "user-name", title: who, text: state.me.tenant_name || who }),
       h("div", { class: "avatar", "aria-hidden": "true", text: initial }),
     ),
   );
   const content = h("main", { class: "content-area", id: "content" });
+  const planNotice = h("div", { class: "hidden" });
   frame.append(
     h("div", { class: "scrim", onclick: closeMenu }),
     sidebar,
-    h("div", { class: "main-wrapper" }, header, content),
+    h("div", { class: "main-wrapper" }, header, planNotice, content),
   );
   clear(root).append(frame);
+  showPlanNotice(planNotice);
   return { links, countBadge, siteSelect, content };
+}
+
+// A trial or a plan near its end says so above every page, with the way to renew.
+async function showPlanNotice(holder) {
+  let plan;
+  try {
+    plan = await api("/v1/billing", { quiet: true });
+  } catch {
+    return; // no plans on this server, or a moment's error: nothing to say
+  }
+  if (!plan.plan || (plan.active && plan.plan !== "trial" && plan.days_left > 3)) return;
+  let text;
+  if (!plan.active) text = "اشتراک شما تمام شده است؛ برای انجام کارهای جدید، اشتراک را تمدید کنید.";
+  else if (plan.plan === "trial") text = `دورهٔ آزمایشی: ${fmt.int(plan.days_left)} روز مانده است.`;
+  else text = `اشتراک شما ${fmt.int(plan.days_left)} روز دیگر تمام می‌شود.`;
+  holder.className = `plan-notice${plan.active ? "" : " plan-notice-ended"}`;
+  holder.append(h("span", { text }), " ", h("a", { href: "#/billing", text: plan.active && plan.plan === "trial" ? "خرید اشتراک" : "تمدید" }));
 }
 
 function syncShell(route) {

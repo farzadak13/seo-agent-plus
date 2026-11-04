@@ -58,6 +58,7 @@ from app.runtime.gsc import build_google_transport
 from app.runtime.properties import build_property_lister
 from app.runtime.service import PersistentSEORunService
 from app.runtime.adapters import SiteAdapterFactory
+from app.runtime.billing import build_billing, build_otp
 from app.runtime.reasoning import build_arvan_transport
 from app.runtime.serp import build_serp_provider
 from app.runtime.title import build_title_workflow
@@ -91,6 +92,8 @@ class RuntimeContainer:
     measurement_loop: WarehouseLoop | None = None
     rank_loop: WarehouseLoop | None = None
     target_store: TargetKeywordStore | None = None
+    billing: object | None = None
+    otp: object | None = None
     warehouse_reports: WarehouseReports | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
@@ -286,6 +289,8 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     # A site with no Search Console data is steered by the words its owner
     # keeps. It asks the same model and the same Google results as the title
     # path, so it is there exactly when that path is.
+    billing = build_billing(config, repository=repository, secret_resolver=secret_resolver)
+    otp = build_otp(config, repository=repository, secret_resolver=secret_resolver)
     target_store = None
     rank_loop = None
     if title_workflow is not None:
@@ -311,6 +316,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
                 target_store=target_store,
                 site_store=site_store,
                 serp_provider=build_serp_provider(config, repository=repository, secret_resolver=secret_resolver),
+                active=lambda tenant_id: billing.entitlement(tenant_id).active,
             ),
             interval_seconds=RANK_ROUND_SECONDS,
             should_run=lambda: worker.running,
@@ -356,6 +362,8 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         measurement_loop=measurement_loop,
         rank_loop=rank_loop,
         target_store=target_store,
+        billing=billing,
+        otp=otp,
         warehouse_reports=WarehouseReports(config.database_dsn) if warehouse is not None else None,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
@@ -405,6 +413,9 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             scan_store=SiteScanStore(container.repository),
             file_store=SiteFileStore(container.repository),
             target_store=container.target_store,
+            billing=container.billing,
+            otp=container.otp,
+            signup_enabled=resolved_config.signup_enabled,
             dashboard_url=resolved_config.dashboard_url or "/",
             allowed_origins=resolved_config.dashboard_origins,
             tenant_name=lambda tenant_id: getattr(
