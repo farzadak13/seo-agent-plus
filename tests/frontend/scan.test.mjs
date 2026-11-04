@@ -208,3 +208,10 @@ test("an improved sitemap names the pages it takes out", async (t) => {
   assert.ok(container.textContent.includes("۱ صفحه از نقشه بیرون می‌رود"));
   assert.ok(container.textContent.includes("https://shop.test/gone"));
 });
+
+test("the summary leads with the health score", async (t) => {
+  server.scan = scan({ health_score: 82 });
+  const container = await open(t);
+  assert.ok(container.textContent.includes("امتیاز سلامت"));
+  assert.ok(container.textContent.includes("۸۲ از ۱۰۰"));
+});

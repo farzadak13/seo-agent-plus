@@ -80,4 +80,6 @@ class SiteScan(BaseModel):
     # More was found than one scan reads.
     pages_capped: bool = False
     issues: list[ScanIssue] = Field(default_factory=list)
+    # 0-100 (app.scan.score); None until the scan is done, or when the site did not answer.
+    health_score: int | None = Field(default=None, ge=0, le=100)
     error: str | None = None

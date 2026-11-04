@@ -1429,3 +1429,40 @@ def test_a_sitemap_with_more_than_addresses_is_not_replaced_by_a_plain_list(body
     issues = build_issues(result)
     assert result.sitemap_rich and "sitemap_lists_broken_page" in codes(issues)
     assert all(plan.kind != SiteFileKind.SITEMAP for plan in plan_site_files(base_url=BASE, result=result, issues=issues))
+
+
+def test_the_health_score_counts_kinds_of_problem_not_pages():
+    from app.models.site_scan import IssueSeverity, ScanIssue
+    from app.scan.score import health_score
+
+    pages = [ScannedPage(url=f"{BASE}{n}", status_code=200) for n in range(10)]
+    critical = lambda code, url=None: ScanIssue(code=code, severity=IssueSeverity.CRITICAL, url=url)  # noqa: E731
+    warning = lambda code, url=None: ScanIssue(code=code, severity=IssueSeverity.WARNING, url=url)  # noqa: E731
+    assert health_score([], pages) == 100
+    assert health_score([critical("missing_title", f"{BASE}0")], pages) == 94  # 15 x the 0.4 floor
+    assert health_score([warning("no_sitemap")] * 3, pages) == 95, "one kind, counted once"
+    assert health_score([ScanIssue(code="page_no_answer", severity=IssueSeverity.WARNING, url=f"{BASE}0")], pages) == 100
+
+
+def test_a_site_google_cannot_see_never_looks_healthy():
+    from app.models.site_scan import IssueSeverity, ScanIssue
+    from app.scan.score import health_score
+
+    pages = [ScannedPage(url=f"{BASE}{n}", status_code=200) for n in range(10)]
+    assert health_score([ScanIssue(code="robots_blocks_everything", severity=IssueSeverity.CRITICAL, url=None)], pages) == 10
+    everywhere = [ScanIssue(code="noindex_in_sitemap", severity=IssueSeverity.CRITICAL, url=page.url) for page in pages]
+    assert health_score(everywhere, pages) == 40
+    assert health_score([ScanIssue(code="home_unreachable", severity=IssueSeverity.CRITICAL, url=None)], []) is None
+
+
+def test_a_finished_scan_carries_its_score():
+    world = World(new_site(), adapter_type=None)
+    scan = world.scan()
+    codes_found = {issue["code"] for issue in scan["issues"]}
+    assert {"no_sitemap", "no_robots"} <= codes_found
+    assert scan["health_score"] < 100
+
+
+def test_a_site_that_did_not_answer_has_no_score():
+    world = World(FakeSite({"/": Fetched(status=None)}))
+    assert world.scan()["health_score"] is None

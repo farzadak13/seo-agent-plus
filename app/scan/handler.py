@@ -21,6 +21,7 @@ from app.scan.crawler import (
 )
 from app.scan.files import FilePlan, plan_site_files, robots_can_be_judged, sitemap_can_be_judged
 from app.scan.issues import build_issues
+from app.scan.score import health_score
 from app.scan.store import SiteFileStore, SiteScanStore
 
 log = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ def build_site_scan_handler(
                         "pages": result.pages,
                         "pages_capped": result.pages_capped,
                         "issues": issues,
+                        "health_score": health_score(issues, result.pages),
                     }
                 )
             )

@@ -264,6 +264,9 @@ export async function scanPage(container, { site, alive }) {
           h("span", { class: "small muted", text: fmt.moment(scan.completed_at) }),
         ),
         h("div", { class: "measure" },
+          scan.health_score !== null && scan.health_score !== undefined
+            ? fact("امتیاز سلامت", `${fmt.int(scan.health_score)} از ۱۰۰`)
+            : null,
           fact("صفحهٔ خوانده‌شده", fmt.int(scan.pages.filter((page) => page.status_code !== null).length)),
           fact("مشکل جدی", fmt.int(count("critical"))),
           fact("قابل بهبود", fmt.int(count("warning"))),
