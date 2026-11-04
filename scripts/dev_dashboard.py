@@ -69,6 +69,9 @@ from app.scan.handler import (  # noqa: E402
     build_site_scan_handler,
 )
 from app.scan.store import SiteFileStore, SiteScanStore  # noqa: E402
+from app.reasoning.keywords import KeywordSuggester  # noqa: E402
+from app.targets.handler import TARGET_SUGGEST_JOB_TYPE, build_target_suggestion_handler  # noqa: E402
+from app.targets.store import TargetKeywordStore  # noqa: E402
 from app.tenancy.store import TenantStore  # noqa: E402
 from app.warehouse.models import (  # noqa: E402
     MetricValues,
@@ -179,6 +182,23 @@ SAMPLE_PUBLIC = {
         "/lessons": _sample_page("آموزش تنیس", ["/"]),
     },
 }
+
+
+class SampleKeywordModel:
+    """Words made from each page's title, in the answer's shape: no model is asked."""
+
+    provider_id = "sample-llm"
+
+    def complete(self, *, messages):
+        import json
+
+        found = re.findall(r"^- (\S+) \| title: ([^|]*)\|", messages[-1].content, flags=re.MULTILINE)
+        words = [
+            {"keyword": title.strip()[:40], "url": url, "intent": "commercial", "reason": "از عنوان همین صفحه برداشته شده است."}
+            for url, title in found
+            if title.strip()
+        ]
+        return json.dumps({"keywords": words[:8]})
 
 
 def sample_fetcher():
@@ -490,6 +510,10 @@ def build():
     handlers.register(SITE_FILE_JOB_TYPE, build_site_file_handler(
         site_store=sites, file_store=files, fetcher=public,
     ))
+    targets = TargetKeywordStore(repository)
+    handlers.register(TARGET_SUGGEST_JOB_TYPE, build_target_suggestion_handler(
+        site_store=sites, scan_store=scans, target_store=targets, suggester=KeywordSuggester(transport=SampleKeywordModel()),
+    ))
     scheduler = JobScheduler(store=jobs, handlers=handlers)
     threading.Thread(
         target=scheduler.run_forever, kwargs={"poll_interval_seconds": 0.5, "stop_event": threading.Event()}, daemon=True,
@@ -508,7 +532,7 @@ def build():
             )
             for url in ("sc-domain:shop.example.com", "sc-domain:next.example.com")
         ],
-        warehouse=warehouse, warehouse_reports=reports, auth=auth, scan_store=scans, file_store=files,
+        warehouse=warehouse, warehouse_reports=reports, auth=auth, scan_store=scans, file_store=files, target_store=targets,
         dashboard_url="/app/", tenant_name=lambda _tenant: "فروشگاه نمونه (توسعه)",
     ))
 

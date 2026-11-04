@@ -7,6 +7,7 @@ from app.models.serp_decision import (
     SERPDecisionStatus,
 )
 from app.models.strategies import Strategy, StrategyType
+from app.models.target_keywords import TARGET_KEYWORD_ORIGIN
 
 
 MIN_COMPETITOR_EVIDENCE = 3
@@ -112,7 +113,11 @@ def build_serp_decision(
 
     reasons: list[str] = []
 
-    if not target_found:
+    # A word the customer chose for a page of a new site: the page has not had
+    # the chance to rank yet, so not ranking is no reason to hold its title back.
+    chosen_word = strategy.evidence.get("origin") == TARGET_KEYWORD_ORIGIN
+
+    if not target_found and not chosen_word:
         reasons.append("target_not_found_in_serp")
 
     if not target_title_present:

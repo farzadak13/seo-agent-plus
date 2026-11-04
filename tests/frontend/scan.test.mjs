@@ -28,10 +28,18 @@ function change(kind, extra = {}) {
   };
 }
 
+function targets(extra = {}) {
+  return {
+    site_id: "site-1", description: "", seeds: [], keywords: [], suggestion_status: "idle",
+    pages: [{ url: "https://shop.test/", title: "خانه" }, { url: "https://shop.test/a", title: "کفش ورزشی" }],
+    ...extra,
+  };
+}
+
 let server;
 
 beforeEach(() => {
-  server = { scan: null, files: [], posts: [], postStatus: 202, onPost: () => {} };
+  server = { scan: null, files: [], posts: [], postStatus: 202, onPost: () => {}, targets: targets() };
   globalThis.fetch = async (url, init) => {
     if (init.method === "POST") {
       server.posts.push(url.pathname);
@@ -40,6 +48,7 @@ beforeEach(() => {
       return answer(server.postStatus, {});
     }
     if (url.pathname.endsWith("/scans/latest")) return server.scan ? answer(200, server.scan) : answer(404, { detail: "none" });
+    if (url.pathname.endsWith("/target-keywords")) return answer(200, server.targets);
     return answer(200, server.files);
   };
 });

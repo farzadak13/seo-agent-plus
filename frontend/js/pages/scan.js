@@ -5,6 +5,7 @@ import { api, messageFor } from "../api.js";
 import { h, clear, fmt, readableUrl } from "../dom.js";
 import { FILE_CHANGES, FILE_NOTES, issueLabel } from "../labels.js";
 import { noSiteYet } from "./dashboard.js";
+import { targetsPanel } from "./targets.js";
 
 const FILE_TITLES = { robots: "فایل robots.txt", sitemap: "نقشهٔ سایت (sitemap)" };
 const WATCH_SECONDS = [2, 3, 5, 5, 10, 10, 20, 30, 40];
@@ -135,6 +136,10 @@ export async function scanPage(container, { site, alive }) {
   }
   const base = `/v1/sites/${encodeURIComponent(site.site_id)}`;
   const area = h("div", {});
+  // Outside the area redrawn while a scan runs, so what is typed there stays;
+  // built again only for a new scan, whose pages the words are for.
+  const targets = h("div", {});
+  let targetsFor = null;
   const top = h("div", { class: "hidden", role: "alert" });
   const problems = new Map();
   let timer = null;
@@ -275,6 +280,11 @@ export async function scanPage(container, { site, alive }) {
       h("div", { class: "panel-title", text: "چیزهایی که پیدا شد" }),
       issueList(scan.issues),
     ));
+    if (targetsFor !== scan.completed_at) {
+      targetsFor = scan.completed_at;
+      clear(targets);
+      targets.append(targetsPanel({ site, alive }));
+    }
     return false;
   }
 
@@ -286,7 +296,7 @@ export async function scanPage(container, { site, alive }) {
       ),
       start,
     ),
-    top, area,
+    top, area, targets,
   );
   await tick();
 }

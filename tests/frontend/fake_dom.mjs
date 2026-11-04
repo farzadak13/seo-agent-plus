@@ -41,7 +41,7 @@ export class FakeElement extends FakeNode {
   setAttribute(name, value) { this.attributes[name] = String(value); }
   addEventListener(type, listener) { (this.listeners[type] ||= []).push(listener); }
   append(...items) {
-    for (const item of items) this.childNodes.push(item instanceof FakeNode ? item : new FakeText(item));
+    for (const item of items) this.childNodes.push(item instanceof FakeNode ? item : new FakeText(String(item)));
   }
   replaceChildren(...items) {
     this.childNodes = [];

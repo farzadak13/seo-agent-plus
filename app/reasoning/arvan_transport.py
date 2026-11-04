@@ -60,6 +60,10 @@ class ArvanTransport:
         return self._config.model
 
     @property
+    def max_retries(self) -> int:
+        return self._config.max_retries
+
+    @property
     def last_usage(self) -> dict:
         return dict(self._last_usage)
 

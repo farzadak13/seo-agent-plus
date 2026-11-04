@@ -19,8 +19,8 @@ class ReasoningNotConfiguredError(RuntimeError):
     """Raised when reasoning is required but no provider is configured."""
 
 
-def build_reasoning_router(config, *, secret_resolver):
-    """Build a ReasoningRouter from runtime configuration.
+def build_arvan_transport(config, *, secret_resolver) -> ArvanTransport:
+    """The model's connection, for every caller that asks it something.
 
     The API key is resolved through the SecretResolver so the raw value never
     reaches configuration objects or persistence.
@@ -44,10 +44,15 @@ def build_reasoning_router(config, *, secret_resolver):
         model=config.arvan_model,
         timeout_seconds=config.llm_timeout_seconds,
     )
-    transport = ArvanTransport(config=provider_config)
+    return ArvanTransport(config=provider_config)
+
+
+def build_reasoning_router(config, *, secret_resolver):
+    """Build a ReasoningRouter from runtime configuration."""
+    transport = build_arvan_transport(config, secret_resolver=secret_resolver)
     reasoner = StructuredTitleReasoner(
         transport=transport,
-        max_retries=provider_config.max_retries,
+        max_retries=transport.max_retries,
     )
 
     registry = ProviderRegistry()

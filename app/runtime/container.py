@@ -38,6 +38,16 @@ from app.scan.handler import (
     build_site_scan_handler,
 )
 from app.scan.store import SiteFileStore, SiteScanStore
+from app.reasoning.keywords import KeywordSuggester
+from app.targets.handler import (
+    RANK_ROUND_SECONDS,
+    TARGET_SUGGEST_JOB_TYPE,
+    TARGET_TITLE_JOB_TYPE,
+    RankTracker,
+    build_target_suggestion_handler,
+    build_target_title_handler,
+)
+from app.targets.store import TargetKeywordStore
 from app.runs.runner import DeterministicPipelineRunner
 from app.runs.service import SEORunService
 from app.runs.store import RunStore
@@ -48,7 +58,10 @@ from app.runtime.gsc import build_google_transport
 from app.runtime.properties import build_property_lister
 from app.runtime.service import PersistentSEORunService
 from app.runtime.adapters import SiteAdapterFactory
+from app.runtime.reasoning import build_arvan_transport
+from app.runtime.serp import build_serp_provider
 from app.runtime.title import build_title_workflow
+from app.title.workflow import TitleProposalStore
 from app.tenancy.store import APIKeyStore, TenantStore
 
 
@@ -76,6 +89,8 @@ class RuntimeContainer:
     warehouse_loop: WarehouseLoop | None = None
     purge_loop: WarehouseLoop | None = None
     measurement_loop: WarehouseLoop | None = None
+    rank_loop: WarehouseLoop | None = None
+    target_store: TargetKeywordStore | None = None
     warehouse_reports: WarehouseReports | None = None
     title_workflow: object | None = None
     gsc_property_lister: object | None = None
@@ -91,8 +106,12 @@ class RuntimeContainer:
                 self.purge_loop.start()
             if self.measurement_loop is not None:
                 self.measurement_loop.start()
+            if self.rank_loop is not None:
+                self.rank_loop.start()
 
     def stop(self) -> None:
+        if self.rank_loop is not None:
+            self.rank_loop.stop()
         if self.measurement_loop is not None:
             self.measurement_loop.stop()
         if self.purge_loop is not None:
@@ -264,6 +283,39 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         SITE_FILE_JOB_TYPE,
         build_site_file_handler(site_store=site_store, file_store=file_store),
     )
+    # A site with no Search Console data is steered by the words its owner
+    # keeps. It asks the same model and the same Google results as the title
+    # path, so it is there exactly when that path is.
+    target_store = None
+    rank_loop = None
+    if title_workflow is not None:
+        target_store = TargetKeywordStore(repository)
+        handlers.register(
+            TARGET_SUGGEST_JOB_TYPE,
+            build_target_suggestion_handler(
+                site_store=site_store,
+                scan_store=scan_store,
+                target_store=target_store,
+                suggester=KeywordSuggester(transport=build_arvan_transport(config, secret_resolver=secret_resolver)),
+            ),
+        )
+        handlers.register(
+            TARGET_TITLE_JOB_TYPE,
+            build_target_title_handler(
+                site_store=site_store, run_store=run_store, action_store=action_store, title_workflow=title_workflow,
+                proposal_store=TitleProposalStore(repository),
+            ),
+        )
+        rank_loop = WarehouseLoop(
+            RankTracker(
+                target_store=target_store,
+                site_store=site_store,
+                serp_provider=build_serp_provider(config, repository=repository, secret_resolver=secret_resolver),
+            ),
+            interval_seconds=RANK_ROUND_SECONDS,
+            should_run=lambda: worker.running,
+            name="rank-tracker",
+        )
 
     scheduler = JobScheduler(
         store=job_store,
@@ -302,6 +354,8 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             should_run=lambda: worker.running, name="record-purge",
         ),
         measurement_loop=measurement_loop,
+        rank_loop=rank_loop,
+        target_store=target_store,
         warehouse_reports=WarehouseReports(config.database_dsn) if warehouse is not None else None,
         title_workflow=title_workflow,
         gsc_property_lister=gsc_property_lister,
@@ -350,6 +404,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             google_login=container.google_login,
             scan_store=SiteScanStore(container.repository),
             file_store=SiteFileStore(container.repository),
+            target_store=container.target_store,
             dashboard_url=resolved_config.dashboard_url or "/",
             allowed_origins=resolved_config.dashboard_origins,
             tenant_name=lambda tenant_id: getattr(

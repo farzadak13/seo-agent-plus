@@ -18,6 +18,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from app.api import oauth_pages
 from app.api.auth import APIKeyAuthenticator
 from app.api.scan_routes import register_scan_routes
+from app.api.target_routes import register_target_routes
 from app.action.approval import ApprovalError, approve, check_rollback, reject
 from app.action.executor import EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE
 from app.action.store import ActionChangedError, ManagedActionStore
@@ -89,6 +90,7 @@ from app.persistence.contracts import (
 )
 from app.runs.handler import SEO_RUN_JOB_TYPE
 from app.scan.handler import SITE_FILE_JOB_TYPE, SITE_SCAN_JOB_TYPE
+from app.targets.handler import TARGET_SUGGEST_JOB_TYPE, TARGET_TITLE_JOB_TYPE
 from app.runs.store import RunStore
 
 
@@ -104,6 +106,8 @@ RESERVED_JOB_TYPES = frozenset(
         ROLLBACK_ACTION_JOB_TYPE,
         SITE_SCAN_JOB_TYPE,
         SITE_FILE_JOB_TYPE,
+        TARGET_SUGGEST_JOB_TYPE,
+        TARGET_TITLE_JOB_TYPE,
     }
 )
 
@@ -137,10 +141,12 @@ class APIDependencies:
         allowed_origins: tuple[str, ...] = (),
         scan_store=None,
         file_store=None,
+        target_store=None,
     ) -> None:
         # None: no site scans on this server.
         self.scan_store = scan_store
         self.file_store = file_store
+        self.target_store = target_store
         # None: no dashboard sign-in on this server; API keys only.
         self.auth = auth
         self.google_login = google_login
@@ -412,6 +418,7 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
         return site
 
     register_scan_routes(app, dependencies, principal_id=principal_id, owned_site=owned_site)
+    register_target_routes(app, dependencies, principal_id=principal_id, owned_site=owned_site)
 
     @app.delete("/v1/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
     def remove_site(

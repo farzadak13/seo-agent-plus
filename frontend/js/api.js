@@ -47,6 +47,8 @@ export async function api(path, { method = "GET", body, query, quiet = false } =
 // not listed falls back to a plain sentence for its status, never to raw text.
 const KNOWN = [
   ["Too many sites scanned", "امروز سایت‌های زیادی بررسی شده است. فردا دوباره امتحان کنید."],
+  ["Too many suggestions asked for today", "امروز به سقف پیشنهاد کلمه رسیده‌اید. فردا دوباره امتحان کنید."],
+  ["Too many titles asked for today", "امروز به سقف پیشنهاد عنوان رسیده‌اید. فردا دوباره امتحان کنید."],
   ["email or password is not correct", "ایمیل یا رمز عبور درست نیست."],
   ["Too many", "تلاش‌های ورود زیاد بوده است. چند دقیقه دیگر دوباره امتحان کنید."],
   ["suspended", "این حساب معلق شده است. با پشتیبانی هوشیار سئو تماس بگیرید."],
@@ -73,6 +75,16 @@ const KNOWN = [
   ["checked a moment ago", "همین چند لحظه پیش بررسی شد. کمی بعد دوباره امتحان کنید."],
   ["not waiting to be checked", "این مورد در انتظار بررسی نیست."],
   ["still under way","یک تغییر روی این سایت هنوز در جریان است. صبر کنید تمام شود یا آن را برگردانید."],
+  ["Scan the site first", "اول سایت را بررسی کنید تا صفحه‌هایش را پیدا کنیم و برای هر کدام کلمه پیشنهاد بدهیم."],
+  ["title for this keyword is already being made", "عنوان این کلمه همین الان در حال آماده شدن است."],
+  ["title for this keyword was asked for a moment ago", "همین چند دقیقه پیش برای این کلمه عنوان خواسته شد. کمی بعد دوباره امتحان کنید."],
+  ["found no page to suggest", "بررسی سایت صفحه‌ای پیدا نکرد که برایش کلمه پیشنهاد کنیم."],
+  ["already being made", "پیشنهاد کلمه برای این سایت همین الان در جریان است."],
+  ["suggested a moment ago", "همین چند دقیقه پیش کلمه پیشنهاد شد. کمی بعد دوباره امتحان کنید."],
+  ["most target keywords", "این سایت به سقف تعداد کلمه‌های هدف رسیده است. اول یکی را حذف کنید."],
+  ["not one the scan read", "این صفحه در بررسی سایت دیده نشد. صفحهٔ دیگری انتخاب کنید یا سایت را دوباره بررسی کنید."],
+  ["Keep the keyword first", "اول این کلمه را نگه دارید، بعد عنوان بخواهید."],
+  ["keyword is empty", "کلمه را بنویسید."],
 ];
 
 export function messageFor(error) {

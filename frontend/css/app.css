@@ -448,3 +448,12 @@ code.block {
 .issue-title { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 0.93rem; }
 .issue p { margin: 0.25rem 0 0.4rem; }
 .issue-urls { margin: 0.4rem 0 0; padding-right: 1.1rem; }
+
+/* Target words: one row per word, with where its page stands. */
+.target-list { margin-top: 1rem; }
+.target-row { border: 1px solid var(--border-light); border-radius: 12px; padding: 0.8rem 1rem; margin-bottom: 0.7rem; display: grid; gap: 0.3rem; }
+.target-word { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.target-row .approval-actions { margin-top: 0.3rem; }
+.target-add { margin-top: 1rem; display: grid; grid-template-columns: 1fr 1fr auto; gap: 0.5rem; align-items: center; }
+.target-add > .small { grid-column: 1 / -1; }
+@media (max-width: 640px) { .target-add { grid-template-columns: 1fr; } }
