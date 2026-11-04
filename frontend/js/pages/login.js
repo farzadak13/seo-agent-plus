@@ -135,6 +135,26 @@ function mobileForm({ onSignedIn, problem }) {
 
 export function loginPage({ onSignedIn }) {
   const problem = h("div", { class: "notice notice-error hidden", role: "alert" });
+  // Shown once the server says sign-in by mobile works; until then the page is
+  // the email form alone, as it was, never a form that answers with an error.
+  const mobileArea = h("div", { class: "hidden" }, mobileForm({ onSignedIn, problem }), h("div", { class: "divider", text: "یا" }));
+  // Shown as before unless the server says Google sign-in is off.
+  const google = h("a", { class: "btn btn-google", href: "/v1/auth/google/start" }, googleIcon(), "ورود با حساب گوگل");
+  const emailArea = h("details", { class: "email-login", open: true });
+  const heading = h("h1", { text: "ورود به حساب" });
+  const lead = h("p", { text: "برای مدیریت پروژه‌های سئو وارد شوید." });
+  api("/v1/auth/options", { quiet: true }).then((options) => {
+    if (!options.google) google.classList.add("hidden");
+    if (!options.mobile) return;
+    mobileArea.classList.remove("hidden");
+    emailArea.open = false;
+    if (options.signup) {
+      heading.textContent = "ورود یا ثبت‌نام";
+      lead.textContent = "با شمارهٔ موبایل وارد شوید؛ اگر حساب ندارید، همین‌جا ساخته می‌شود.";
+    } else {
+      lead.textContent = "با شمارهٔ موبایل یا ایمیل وارد شوید.";
+    }
+  }).catch(() => { /* the page as it was: email and Google */ });
   const email = h("input", { class: "input ltr", id: "email", type: "email", required: true, autocomplete: "username", placeholder: "name@company.com" });
   const password = h("input", { class: "input ltr", id: "password", type: "password", required: true, autocomplete: "current-password", placeholder: "••••••••" });
   const submit = h("button", { class: "btn btn-primary btn-submit", type: "submit", text: "ورود با ایمیل" });
@@ -169,18 +189,11 @@ export function loginPage({ onSignedIn }) {
     h("section", { class: "auth-section" },
       h("div", { class: "auth-wrapper" },
         h("div", { class: "brand-mobile" }, h("span", { class: "gold-text", text: "✦" }), " هوشیار سئو"),
-        h("div", { class: "auth-header" },
-          h("h1", { text: "ورود یا ثبت‌نام" }),
-          h("p", { text: "با شمارهٔ موبایل وارد شوید؛ اگر حساب ندارید، همین‌جا ساخته می‌شود." }),
-        ),
+        h("div", { class: "auth-header" }, heading, lead),
         problem,
-        mobileForm({ onSignedIn, problem }),
-        h("div", { class: "divider", text: "یا" }),
-        h("a", { class: "btn btn-google", href: "/v1/auth/google/start" }, googleIcon(), "ورود با حساب گوگل"),
-        h("details", { class: "email-login" },
-          h("summary", { class: "small muted", text: "ورود با ایمیل و رمز عبور" }),
-          form,
-        ),
+        mobileArea,
+        google,
+        (emailArea.append(h("summary", { class: "small muted", text: "ورود با ایمیل و رمز عبور" }), form), emailArea),
       ),
     ),
     h("section", { class: "showcase", "aria-hidden": "true" },

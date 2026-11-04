@@ -82,6 +82,16 @@ def register_account_routes(
     def address_of(request: Request) -> str:
         return request.client.host if request.client else "unknown"
 
+    @app.get("/v1/auth/options")
+    def sign_in_options() -> dict:
+        """Which ways in this server offers, so the sign-in page shows only those that work."""
+        mobile = dependencies.otp is not None and dependencies.auth is not None
+        return {
+            "mobile": mobile,
+            "signup": mobile and dependencies.signup_enabled,
+            "google": dependencies.google_login is not None,
+        }
+
     @app.post("/v1/auth/mobile/code", status_code=status.HTTP_202_ACCEPTED)
     def send_code(request: MobileCodeRequest, http_request: Request) -> dict:
         service = otp()

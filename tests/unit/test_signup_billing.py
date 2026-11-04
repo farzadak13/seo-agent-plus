@@ -553,3 +553,8 @@ def test_an_unexpected_gateway_refusal_keeps_the_payment_open():
     world.zarinpal.verify_code = 101  # it had gone through after all
     assert world.client.get("/v1/billing").json()["plan"] == "starter"
     assert world.billing.entitlement(tenant_id).plan == PlanId.STARTER
+
+
+def test_the_sign_in_page_is_told_which_ways_in_work():
+    assert World().client.get("/v1/auth/options").json() == {"mobile": True, "signup": True, "google": False}
+    assert World(signup=False).client.get("/v1/auth/options").json()["signup"] is False

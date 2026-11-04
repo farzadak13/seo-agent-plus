@@ -9,11 +9,12 @@ import { billingPage } from "../../frontend/js/pages/billing.js";
 let server;
 
 beforeEach(() => {
-  server = { calls: [], verify: () => answer(200, { csrf_token: "c" }), billing: null, checkout: () => answer(200, { url: "https://pay.example/StartPay/A1" }) };
+  server = { options: { mobile: true, signup: true, google: true }, calls: [], verify: () => answer(200, { csrf_token: "c" }), billing: null, checkout: () => answer(200, { url: "https://pay.example/StartPay/A1" }) };
   globalThis.window = { location: { hash: "#/billing", origin: "https://hoshyarseo.ir", assign: (url) => { server.assigned = url; } } };
   globalThis.fetch = async (url, init) => {
     const body = init.body ? JSON.parse(init.body) : null;
     server.calls.push([url.pathname, body]);
+    if (url.pathname === "/v1/auth/options") return answer(200, server.options);
     if (url.pathname === "/v1/auth/mobile/code") return answer(202, { sent: true, wait_seconds: 60 });
     if (url.pathname === "/v1/auth/mobile/verify") return server.verify(body);
     if (url.pathname === "/v1/billing") return answer(200, server.billing);
@@ -38,7 +39,7 @@ test("a new number is asked for the business and the terms, then signed in", asy
   const page = loginPage({ onSignedIn: async () => { signedIn += 1; } });
   type(input(page, "mobile"), "۰۹۱۲۰۰۰۰۰۰۱");
   await submit(page);
-  assert.deepEqual(server.calls[0], ["/v1/auth/mobile/code", { mobile: "۰۹۱۲۰۰۰۰۰۰۱" }]);
+  assert.deepEqual(server.calls.find(([path]) => path === "/v1/auth/mobile/code"), ["/v1/auth/mobile/code", { mobile: "۰۹۱۲۰۰۰۰۰۰۱" }]);
   assert.ok(page.textContent.includes("ارسال دوباره تا ۶۰ ثانیهٔ دیگر"));
 
   server.verify = (body) => answer(200, body.business_name ? { csrf_token: "c" } : { status: "needs_signup" });
@@ -135,4 +136,36 @@ test("an account without a plan has nothing to buy", async () => {
   await billingPage(container, { param: null, alive: () => true });
   assert.ok(container.textContent.includes("حساب شما محدودیت پلن ندارد."));
   assert.equal(findAll(container, (element) => element.tagName === "button").length, 0);
+});
+
+
+test("a server without sign-in by mobile shows the email form alone, as before", async () => {
+  server.options = { mobile: false, signup: false, google: false };
+  const page = loginPage({ onSignedIn: async () => {} });
+  await settle();
+  const mobileArea = findAll(page, (element) => element.tagName === "div" && findAll(element, (child) => child.id === "mobile").length && element.className === "hidden");
+  assert.ok(mobileArea.length, "the mobile form stays hidden");
+  assert.ok(page.textContent.includes("ورود به حساب"));
+  const [google] = findAll(page, (element) => element.tagName === "a" && element.href === "/v1/auth/google/start");
+  assert.ok(google.className.includes("hidden"));
+});
+
+test("with sign-up open the page says it signs up too", async () => {
+  const page = loginPage({ onSignedIn: async () => {} });
+  await settle();
+  assert.ok(page.textContent.includes("ورود یا ثبت‌نام"));
+});
+
+
+test("when the server cannot be asked, email and Google stay as they were", async () => {
+  server.options = null;
+  const saved = globalThis.fetch;
+  globalThis.fetch = async (url, init) => (url.pathname === "/v1/auth/options" ? answer(500, { detail: "down" }) : saved(url, init));
+  const page = loginPage({ onSignedIn: async () => {} });
+  await settle();
+  const [google] = findAll(page, (element) => element.tagName === "a" && element.href === "/v1/auth/google/start");
+  assert.ok(!google.className.includes("hidden"));
+  const [email] = findAll(page, (element) => element.tagName === "details");
+  assert.notEqual(email.open, false, "never closed: the email form is the way in");
+  assert.ok(input(page, "email"));
 });
