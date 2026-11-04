@@ -39,7 +39,9 @@ function addSiteForm({ refreshSites, rerender, first }) {
         try {
           const site = await api("/v1/sites", { method: "POST", body: { name: name.value.trim(), base_url: url.value.trim() } });
           await refreshSites(site.site_id);
-          rerender();
+          // A new site starts with a look at it; connecting comes after.
+          await api(`/v1/sites/${encodeURIComponent(site.site_id)}/scans`, { method: "POST", body: {} }).catch(() => null);
+          window.location.hash = "#/scan";
         } catch (error) {
           problem.show(error);
           submit.disabled = false;
@@ -267,6 +269,39 @@ function siteConnectionStep(site, context) {
   return box;
 }
 
+function removeSite(site, context) {
+  const problem = problemBox();
+  const holder = h("div", { class: "step-actions" });
+  const ask = h("button", {
+    class: "btn btn-danger", type: "button", text: "حذف این سایت",
+    onclick: () => {
+      const yes = h("button", {
+        class: "btn btn-danger", type: "button", text: "بله، حذف کن",
+        onclick: async () => {
+          yes.disabled = true;
+          problem.hide();
+          try {
+            await api(`/v1/sites/${encodeURIComponent(site.site_id)}`, { method: "DELETE" });
+            context.state.siteId = null;
+            await context.refreshSites();
+            context.rerender();
+          } catch (error) {
+            problem.show(error);
+            yes.disabled = false;
+          }
+        },
+      });
+      const no = h("button", { class: "btn", type: "button", text: "نه", onclick: () => holder.replaceChildren(ask) });
+      holder.replaceChildren(
+        h("span", { class: "small", text: "این سایت از داشبورد حذف شود؟ تغییرهایی که قبلاً روی سایت اعمال شده‌اند سر جایشان می‌مانند." }),
+        yes, no,
+      );
+    },
+  });
+  holder.append(ask);
+  return h("div", {}, problem, holder);
+}
+
 function syncStep(sync) {
   if (!sync) return h("p", { class: "small muted", text: "وضعیت در دسترس نیست." });
   const box = h("div", {});
@@ -315,6 +350,7 @@ export async function settingsPage(container, context) {
     step(2, site.gsc_configured, "انتخاب property سرچ کنسول", propertyStep(site, google.connected, context)),
     step(3, Boolean(site.site_adapter_type), "روش اعمال تغییرها روی سایت", siteConnectionStep(site, context)),
     step(4, syncDone, "دریافت تاریخچهٔ سرچ کنسول", syncStep(sync)),
+    removeSite(site, context),
   );
 
   container.append(header, h("div", { class: "settings-grid" }, progress, addSiteForm({ ...context, first: state.sites.length === 0 })));

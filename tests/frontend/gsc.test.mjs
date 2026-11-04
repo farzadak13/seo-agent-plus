@@ -33,7 +33,7 @@ beforeEach(() => {
       server.posts.push(JSON.parse(init.body));
       return answer(202, { run_id: "run-1" });
     }
-    if (url.pathname.endsWith("/sync")) return answer(200, { state: "up_to_date" });
+    if (url.pathname.endsWith("/sync")) return answer(200, { state: server.sync || "up_to_date" });
     server.requests.push(url);
     const held = server.hold(url);
     if (held) await held;
@@ -64,6 +64,20 @@ async function openPage(container) {
   button(container, "/page").click();
   await settle();
 }
+
+test("a site whose data cannot be read says why instead of drawing an empty page", async () => {
+  server.sync = "not_eligible";
+  const container = await open();
+  assert.ok(container.textContent.includes("property"));
+  assert.ok(findAll(container, (element) => element.tagName === "a" && element.href === "#/settings").length);
+  assert.equal(server.requests.length, 0, "no report is asked for only to be refused");
+});
+
+test("a site with no data yet is pointed at the site scan", async () => {
+  server.table = { rows: [], next_offset: null };
+  const container = await open();
+  assert.ok(findAll(container, (element) => element.tagName === "a" && element.href === "#/scan").length);
+});
 
 test("a failed first load offers a way to try again, which works", async () => {
   server.fail = () => true;

@@ -46,6 +46,7 @@ export async function api(path, { method = "GET", body, query, quiet = false } =
 // The API speaks English to developers; the customer reads Persian. Anything
 // not listed falls back to a plain sentence for its status, never to raw text.
 const KNOWN = [
+  ["Too many sites scanned", "امروز سایت‌های زیادی بررسی شده است. فردا دوباره امتحان کنید."],
   ["email or password is not correct", "ایمیل یا رمز عبور درست نیست."],
   ["Too many", "تلاش‌های ورود زیاد بوده است. چند دقیقه دیگر دوباره امتحان کنید."],
   ["suspended", "این حساب معلق شده است. با پشتیبانی هوشیار سئو تماس بگیرید."],
@@ -66,6 +67,12 @@ const KNOWN = [
   ["cannot be approved", "این مورد دیگر در انتظار تأیید نیست."],
   ["cannot be rejected", "این مورد دیگر قابل رد کردن نیست."],
   ["not waiting to be applied", "این مورد در انتظار اعمال نیست."],
+  ["already running", "یکی از سایت‌های شما همین الان در حال بررسی است. چند دقیقه بعد دوباره امتحان کنید."],
+  ["scanned a moment ago", "این سایت همین چند دقیقه پیش بررسی شد. کمی بعد دوباره امتحان کنید."],
+  ["usual web ports", "فقط سایت‌هایی که روی پورت معمول وب هستند بررسی می‌شوند."],
+  ["checked a moment ago", "همین چند لحظه پیش بررسی شد. کمی بعد دوباره امتحان کنید."],
+  ["not waiting to be checked", "این مورد در انتظار بررسی نیست."],
+  ["still under way","یک تغییر روی این سایت هنوز در جریان است. صبر کنید تمام شود یا آن را برگردانید."],
 ];
 
 export function messageFor(error) {

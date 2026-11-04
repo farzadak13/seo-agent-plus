@@ -186,6 +186,13 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
     body.push(h("div", { class: "approval-actions" }, check, copyButton(title), reject));
   } else if (APPLYING.has(action.status) && !action.error) {
     body.push(h("div", { class: "notice", text: "در حال اعمال و بررسی روی سایت…" }));
+  } else if (action.status === "executed" && manual) {
+    // The title was seen, then the check after it ran out of attempts.
+    const again = h("button", {
+      class: "btn btn-primary", type: "button", text: "دوباره بررسی کن",
+      onclick: () => act(again, actionPath(action, "applied"), undefined, refreshSoon),
+    });
+    body.push(h("div", { class: "approval-actions" }, again));
   }
 
   if (action.status === "measurement_window_active" && action.applied) {

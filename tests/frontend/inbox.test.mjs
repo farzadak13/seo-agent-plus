@@ -188,6 +188,16 @@ test("a finished change keeps its result beside an error from undoing it", async
   assert.deepEqual(badges(container), ["موفق"]);
 });
 
+test("a seen title whose check ran out of attempts can be checked again on a manual site", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  server.actions = [appliedChange({ error: "no answer" })];
+  const { container } = await open(MANUAL);
+  findAll(container, (element) => element.attributes.role === "tab")[1].click();
+  button(container, "دوباره بررسی کن").click();
+  await settle();
+  assert.deepEqual(server.posts, [{ path: "/v1/actions/a/applied", body: {} }]);
+});
+
 const WAITING_TO_RESTORE = [{ reason: "waiting_for_customer_to_restore", at: "2026-10-02T00:00:00Z", detail: { restore_title: "old title" } }];
 
 test("undoing by hand on a manual site asks for the old title back", async () => {

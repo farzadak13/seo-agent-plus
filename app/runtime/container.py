@@ -31,6 +31,13 @@ from app.onboarding.site_store import SiteStore
 from app.persistence.postgres import PostgresRepository
 from app.runs.development import EmptyBaselineProvider, StubGSCGateway
 from app.runs.handler import SEO_RUN_JOB_TYPE, build_seo_run_handler
+from app.scan.handler import (
+    SITE_FILE_JOB_TYPE,
+    SITE_SCAN_JOB_TYPE,
+    build_site_file_handler,
+    build_site_scan_handler,
+)
+from app.scan.store import SiteFileStore, SiteScanStore
 from app.runs.runner import DeterministicPipelineRunner
 from app.runs.service import SEORunService
 from app.runs.store import RunStore
@@ -246,6 +253,17 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
             action_store=action_store, site_store=site_store, adapter_factory=adapters
         ),
     )
+    # Where a site starts: needs its address, not Google and not a model.
+    scan_store = SiteScanStore(repository)
+    file_store = SiteFileStore(repository)
+    handlers.register(
+        SITE_SCAN_JOB_TYPE,
+        build_site_scan_handler(site_store=site_store, scan_store=scan_store, file_store=file_store),
+    )
+    handlers.register(
+        SITE_FILE_JOB_TYPE,
+        build_site_file_handler(site_store=site_store, file_store=file_store),
+    )
 
     scheduler = JobScheduler(
         store=job_store,
@@ -330,6 +348,8 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             warehouse_reports=container.warehouse_reports,
             auth=container.auth,
             google_login=container.google_login,
+            scan_store=SiteScanStore(container.repository),
+            file_store=SiteFileStore(container.repository),
             dashboard_url=resolved_config.dashboard_url or "/",
             allowed_origins=resolved_config.dashboard_origins,
             tenant_name=lambda tenant_id: getattr(

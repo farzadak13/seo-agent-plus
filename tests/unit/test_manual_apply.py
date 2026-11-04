@@ -222,6 +222,31 @@ def test_a_manual_connection_needs_no_credentials_and_stays_on_the_site():
     assert adapter.adapter_id == "manual:site-1"
 
 
+def test_saying_it_is_applied_again_reaches_a_check_that_ran_out_of_attempts():
+    actions, page, execute, _ = world()
+    page.title = NEW_TITLE
+    read = page.read_page
+    reads = []
+
+    def only_the_first_read_answers(**kwargs):
+        reads.append(kwargs)
+        if len(reads) > 1:
+            raise RuntimeError("no answer")
+        return read(**kwargs)
+
+    page.read_page = only_the_first_read_answers
+    for _attempt in range(3):
+        with pytest.raises(RuntimeError):
+            execute({"action_id": ACTION_ID})
+    assert actions.get(ACTION_ID).status == ActionStatus.EXECUTED
+
+    page.read_page = read
+    execute({"action_id": ACTION_ID})  # the job the customer's new report queues
+    stored = actions.get(ACTION_ID)
+    assert stored.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE
+    assert stored.error is None
+
+
 # ---- the API -----------------------------------------------------------------
 
 
@@ -256,6 +281,35 @@ def test_saying_it_is_applied_queues_a_check_of_the_page():
 
     assert response.status_code == 202
     assert actions.get(ACTION_ID).history[-1].reason == "customer_reported_applied"
+    assert jobs.get(response.json()["job_id"]).job_type == EXECUTE_ACTION_JOB_TYPE
+
+
+def test_a_check_that_ran_out_of_attempts_can_be_asked_for_again():
+    client, actions, jobs = make_client(manual_site())
+    client.post(f"/v1/actions/{ACTION_ID}/approve", json={})
+    page_seen = FakeManualSite(title=NEW_TITLE)
+    handler = build_execute_action_handler(
+        action_store=actions,
+        site_store=client.app.state.dependencies.site_store,
+        adapter_factory=FakeAdapterFactory(page_seen),
+    )
+    read = page_seen.read_page
+    reads = []
+
+    def second_read_fails(**kwargs):
+        reads.append(kwargs)
+        if len(reads) == 2:
+            raise RuntimeError("no answer")
+        return read(**kwargs)
+
+    page_seen.read_page = second_read_fails
+    with pytest.raises(RuntimeError):
+        handler({"action_id": ACTION_ID})
+    assert actions.get(ACTION_ID).status == ActionStatus.EXECUTED
+
+    response = client.post(f"/v1/actions/{ACTION_ID}/applied")
+
+    assert response.status_code == 202
     assert jobs.get(response.json()["job_id"]).job_type == EXECUTE_ACTION_JOB_TYPE
 
 

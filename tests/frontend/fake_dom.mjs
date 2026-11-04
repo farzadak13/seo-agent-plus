@@ -47,6 +47,7 @@ export class FakeElement extends FakeNode {
     this.childNodes = [];
     this.append(...items);
   }
+  hasChildNodes() { return this.childNodes.length > 0; }
   focus() { this.focused = true; }
   setSelectionRange() {}
   dispatch(type) {

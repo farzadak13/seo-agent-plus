@@ -326,6 +326,54 @@ def test_a_passing_failure_to_read_the_page_back_leaves_no_error_behind():
     assert stored.error is None, "weeks of measuring must not sit under an old error"
 
 
+def _removal_client(actions=()):
+    repository = InMemoryRepository()
+    sites = SiteStore(repository)
+    sites.create(make_site())
+    store = ManagedActionStore(repository)
+    for managed in actions:
+        store.create(managed)
+    app = create_app(APIDependencies(
+        scheduler=JobScheduler(store=JobStore(repository), handlers=JobHandlerRegistry()),
+        authenticator=APIKeyAuthenticator(API_KEY, principal_id="principal-1"),
+        site_store=sites, action_store=store,
+    ))
+    client = TestClient(app)
+    client.headers["Authorization"] = f"Bearer {API_KEY}"
+    return client, sites
+
+
+def test_a_removed_site_leaves_the_list_and_answers_as_gone():
+    client, sites = _removal_client()
+
+    assert client.delete("/v1/sites/site-1").status_code == 204
+
+    assert client.get("/v1/sites").json() == []
+    assert client.get("/v1/sites/site-1").status_code == 404
+    assert client.delete("/v1/sites/site-1").status_code == 404
+    assert sites.get("site-1").status == "removed", "the record stays; only the dashboard forgets it"
+
+
+def test_a_site_with_a_proposal_waiting_can_be_removed():
+    client, _ = _removal_client([make_pending()])
+    assert client.delete("/v1/sites/site-1").status_code == 204
+
+
+def test_a_site_with_a_change_under_way_cannot_be_removed():
+    client, _ = _removal_client([approve(make_pending(), actor="principal-1")])
+    response = client.delete("/v1/sites/site-1")
+    assert response.status_code == 409
+    assert "still under way" in response.json()["detail"]
+    assert client.get("/v1/sites/site-1").status_code == 200
+
+
+def test_someone_elses_site_cannot_be_removed():
+    client, sites = _removal_client()
+    sites.create(make_site().model_copy(update={"site_id": "site-2", "principal_id": "principal-2"}))
+    assert client.delete("/v1/sites/site-2").status_code in {403, 404}
+    assert sites.get("site-2").status == "active"
+
+
 def test_a_timeout_after_the_site_accepted_the_write_is_not_lost():
     class AcceptsThenTimesOut(FakePageAdapter):
         def update_title(self, **kwargs):

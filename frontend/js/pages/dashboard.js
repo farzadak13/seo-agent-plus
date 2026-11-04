@@ -79,12 +79,15 @@ export async function dashboardPage(container, { site, alive }) {
     waiting.length === 0
       ? h("div", { class: "empty" },
           h("p", { text: "الان کاری منتظر شما نیست." }),
-          site.gsc_configured
-            ? h("p", { class: "small", text: "برای گرفتن پیشنهاد، در صفحهٔ عملکرد سایت یک صفحه و کلمهٔ کلیدی را تحلیل کنید." })
-            : null,
-          site.gsc_configured
-            ? h("a", { class: "btn", href: "#/gsc", text: "رفتن به عملکرد سایت" })
-            : h("a", { class: "btn btn-primary", href: "#/settings", text: "وصل کردن سرچ کنسول" }),
+          sync?.state === "up_to_date" || sync?.state === "backfilling"
+            ? [
+                h("p", { class: "small", text: "برای گرفتن پیشنهاد، در صفحهٔ عملکرد سایت یک صفحه و کلمهٔ کلیدی را تحلیل کنید." }),
+                h("a", { class: "btn", href: "#/gsc", text: "رفتن به عملکرد سایت" }),
+              ]
+            : [
+                h("p", { class: "small", text: "سایت تازه است یا هنوز سرچ کنسول وصل نیست؟ از بررسی سایت شروع کنید؛ فقط آدرس سایت را لازم دارد." }),
+                h("a", { class: "btn btn-primary", href: "#/scan", text: "بررسی سایت" }),
+              ],
         )
       : waiting.slice(0, 4).map((action) => {
           const label = statusLabel(action.status);

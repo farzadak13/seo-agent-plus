@@ -6,6 +6,7 @@ import { loginPage } from "./pages/login.js";
 import { dashboardPage } from "./pages/dashboard.js";
 import { inboxPage } from "./pages/inbox.js";
 import { gscPage } from "./pages/gsc.js";
+import { scanPage } from "./pages/scan.js";
 import { settingsPage } from "./pages/settings.js";
 import { loadActions } from "./pages/actions.js";
 import { needsYou } from "./labels.js";
@@ -19,6 +20,7 @@ let navigation = 0;
 
 const PAGES = [
   { path: "", title: "مرکز فرماندهی ایجنت", render: dashboardPage },
+  { path: "scan", title: "بررسی سایت", render: scanPage },
   { path: "inbox", title: "صندوق تأیید", render: inboxPage, counted: true },
   { path: "gsc", title: "عملکرد سایت (GSC)", render: gscPage },
   { path: "settings", title: "تنظیمات پروژه", render: settingsPage },
@@ -42,7 +44,8 @@ async function loadSites() {
   state.sites = await api("/v1/sites");
   const saved = state.siteId || storedGet(SITE_KEY);
   const known = state.sites.find((site) => site.site_id === saved);
-  state.siteId = known ? known.site_id : state.sites[0]?.site_id || null;
+  // The list is oldest first, and the newest is the one being worked on.
+  state.siteId = known ? known.site_id : state.sites[state.sites.length - 1]?.site_id || null;
 }
 
 function buildShell() {

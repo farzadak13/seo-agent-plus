@@ -55,6 +55,17 @@ export async function gscPage(container, { site, alive, refreshCount }) {
   }
 
   const base = `/v1/sites/${encodeURIComponent(site.site_id)}`;
+  const sync = await api(`${base}/sync`).catch(() => null);
+  if (!alive()) return;
+  if (sync?.state === "not_eligible") {
+    // The server would refuse every report; say why instead of drawing an empty page.
+    container.append(h("div", { class: "card-panel empty" },
+      h("p", { text: "دادهٔ سرچ کنسول این سایت خوانده نمی‌شود، چون property آن باید متعلق به دامنهٔ خودش باشد. در تنظیمات پروژه حساب گوگل خودتان را وصل کنید و property درست را انتخاب کنید." }),
+      h("a", { class: "btn btn-primary", href: "#/settings", text: "رفتن به تنظیمات پروژه" }),
+    ));
+    return;
+  }
+
   const view = {
     days: 28, device: null, metric: "clicks", tab: "queries", page: null,
     sort: "clicks", order: "desc", contains: "", rows: [], report: null, nextOffset: null,
@@ -265,7 +276,11 @@ export async function gscPage(container, { site, alive, refreshCount }) {
     );
     const body = view.rows.length
       ? view.rows.map(row)
-      : h("tr", {}, h("td", { colSpan: 8, class: "empty", text: view.contains ? "چیزی پیدا نشد." : "برای این بازه داده‌ای نیست." }));
+      : h("tr", {}, h("td", { colSpan: 8, class: "empty" },
+          view.contains ? "چیزی پیدا نشد." : "برای این بازه داده‌ای نیست. سایت تازه است؟ تا وقتی گوگل داده جمع کند، از ",
+          view.contains ? null : h("a", { href: "#/scan", text: "بررسی سایت" }),
+          view.contains ? null : " شروع کنید.",
+        ));
     tableArea.append(h("section", { class: "data-card" },
       h("div", { class: "data-card-header" }, tabs, search),
       crumb,
@@ -374,8 +389,6 @@ export async function gscPage(container, { site, alive, refreshCount }) {
     runNotice, loadNotice, tableArea,
   );
 
-  const sync = await api(`${base}/sync`).catch(() => null);
-  if (!alive()) return;
   if (sync?.state === "backfilling") {
     syncNote.textContent = `تاریخچهٔ سرچ کنسول هنوز در حال دریافت است (${fmt.int(Math.round(sync.progress * 100))}٪). عددهای بازه‌های قدیمی‌تر کم‌کم کامل می‌شوند.`;
     syncNote.classList.remove("hidden");

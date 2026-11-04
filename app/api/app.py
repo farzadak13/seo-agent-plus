@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api import oauth_pages
 from app.api.auth import APIKeyAuthenticator
+from app.api.scan_routes import register_scan_routes
 from app.action.approval import ApprovalError, approve, check_rollback, reject
 from app.action.executor import EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE
 from app.action.store import ActionChangedError, ManagedActionStore
@@ -54,6 +55,7 @@ from app.models.sites import (
     SecretRef,
     Site,
     SiteAdapterConnection,
+    SiteStatus,
 )
 from app.onboarding.ownership import meta_tag as ownership_meta_tag
 from app.onboarding.ownership import new_token as new_ownership_token
@@ -86,6 +88,7 @@ from app.persistence.contracts import (
     PersistenceNotFoundError,
 )
 from app.runs.handler import SEO_RUN_JOB_TYPE
+from app.scan.handler import SITE_FILE_JOB_TYPE, SITE_SCAN_JOB_TYPE
 from app.runs.store import RunStore
 
 
@@ -95,7 +98,13 @@ SITE_SECRET_ENV_PREFIX = "SEO_AGENT_SITE_SECRET_"
 GOOGLE_ACCOUNT_AUTH_MODE = "oauth_refresh_token"
 
 RESERVED_JOB_TYPES = frozenset(
-    {SEO_RUN_JOB_TYPE, EXECUTE_ACTION_JOB_TYPE, ROLLBACK_ACTION_JOB_TYPE}
+    {
+        SEO_RUN_JOB_TYPE,
+        EXECUTE_ACTION_JOB_TYPE,
+        ROLLBACK_ACTION_JOB_TYPE,
+        SITE_SCAN_JOB_TYPE,
+        SITE_FILE_JOB_TYPE,
+    }
 )
 
 
@@ -126,7 +135,12 @@ class APIDependencies:
         google_login=None,
         dashboard_url: str = "/",
         allowed_origins: tuple[str, ...] = (),
+        scan_store=None,
+        file_store=None,
     ) -> None:
+        # None: no site scans on this server.
+        self.scan_store = scan_store
+        self.file_store = file_store
         # None: no dashboard sign-in on this server; API keys only.
         self.auth = auth
         self.google_login = google_login
@@ -386,7 +400,33 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
     ) -> list[SiteResponse]:
         """This tenant's sites, for the dashboard's site picker."""
         sites = _require_site_store(dependencies).list_for_tenant(authenticated_principal_id)
-        return [SiteResponse.from_site(site) for site in sorted(sites, key=lambda s: s.created_at)]
+        return [
+            SiteResponse.from_site(site)
+            for site in sorted(sites, key=lambda s: s.created_at)
+            if site.status != SiteStatus.REMOVED
+        ]
+
+    def owned_site(site_id: str, principal: str) -> Site:
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, principal)
+        return site
+
+    register_scan_routes(app, dependencies, principal_id=principal_id, owned_site=owned_site)
+
+    @app.delete("/v1/sites/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
+    def remove_site(
+        site_id: str,
+        authenticated_principal_id: str = Depends(principal_id),
+    ) -> None:
+        """Take a site out of the dashboard. What was already applied stays on it."""
+        site = _get_site(dependencies, site_id)
+        _ensure_owner(site.principal_id, authenticated_principal_id)
+        if dependencies.action_store is not None and _has_change_under_way(dependencies.action_store, site):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A change on this site is still under way; let it finish or undo it first.",
+            )
+        _require_site_store(dependencies).update(site.model_copy(update={"status": SiteStatus.REMOVED}))
 
     @app.get("/v1/sites/{site_id}", response_model=SiteResponse)
     def get_site(
@@ -1079,7 +1119,9 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This site applies changes itself; there is nothing to report.",
             )
-        if managed.status != ActionStatus.APPROVED:
+        # EXECUTED: the title was seen but the check after it ran out of attempts.
+        # Nothing else would ever look again, so saying so again has to work.
+        if managed.status not in {ActionStatus.APPROVED, ActionStatus.EXECUTED}:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"An action in status {managed.status.value} is not waiting to be applied.",
@@ -1370,12 +1412,41 @@ def _get_job(scheduler: JobScheduler, job_id: str) -> Job:
 def _get_site(dependencies: APIDependencies, site_id: str) -> Site:
     store = _require_site_store(dependencies)
     try:
-        return store.get(site_id)
+        site = store.get(site_id)
     except PersistenceNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Site not found.",
         ) from exc
+    if site.status == SiteStatus.REMOVED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Site not found.")
+    return site
+
+
+# The site is being written to, or a change on it is being measured and can
+# still be undone. Removing the site would leave that with nobody to act on it.
+_CHANGE_UNDER_WAY = frozenset(
+    {
+        ActionStatus.APPROVED,
+        ActionStatus.EXECUTING,
+        ActionStatus.EXECUTED,
+        ActionStatus.WAITING_FOR_RECRAWL,
+        ActionStatus.MEASUREMENT_WINDOW_ACTIVE,
+        ActionStatus.EVALUATING,
+    }
+)
+
+
+def _has_change_under_way(action_store: ManagedActionStore, site: Site) -> bool:
+    cursor = None
+    while True:
+        actions, cursor = action_store.query(
+            tenant_id=site.principal_id, site_id=site.site_id, limit=200, cursor=cursor
+        )
+        if any(managed.status in _CHANGE_UNDER_WAY for managed in actions):
+            return True
+        if cursor is None:
+            return False
 
 
 def _get_run(dependencies: APIDependencies, run_id: str) -> SEORun:

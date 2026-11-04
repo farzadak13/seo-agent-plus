@@ -23,6 +23,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -60,6 +61,14 @@ from app.onboarding.site_store import SiteStore  # noqa: E402
 from app.persistence.memory import InMemoryRepository  # noqa: E402
 from app.runs.handler import SEO_RUN_JOB_TYPE  # noqa: E402
 from app.runs.store import RunStore  # noqa: E402
+from app.scan.crawler import Fetched, SiteCrawler  # noqa: E402
+from app.scan.handler import (  # noqa: E402
+    SITE_FILE_JOB_TYPE,
+    SITE_SCAN_JOB_TYPE,
+    build_site_file_handler,
+    build_site_scan_handler,
+)
+from app.scan.store import SiteFileStore, SiteScanStore  # noqa: E402
 from app.tenancy.store import TenantStore  # noqa: E402
 from app.warehouse.models import (  # noqa: E402
     MetricValues,
@@ -147,6 +156,45 @@ class SampleSite:
             success=True, operation=AdapterOperation.UPDATE_TITLE, site_id=site_id, normalized_url=normalized_url,
             change_id=f"dev:{self.writes}", previous_value=previous, new_value=new_title,
         )
+
+
+
+def _sample_page(title: str, links: list[str]) -> bytes:
+    anchors = "".join(f'<a href="{link}">{link}</a>' for link in links)
+    return (
+        f"<html><head><title>{title}</title></head><body><h1>{title}</h1>"
+        f"<p>{'متن نمونهٔ صفحه ' * 40}</p>{anchors}</body></html>"
+    ).encode("utf-8")
+
+
+SAMPLE_PUBLIC = {
+    "shop.example.com": {
+        "/": _sample_page("فروشگاه نمونه", ["/men-shoes", "/women-bags", "/gone"]),
+        "/men-shoes": _sample_page("کفش مردانه | فروشگاه نمونه", ["/"]),
+        "/women-bags": _sample_page("کیف زنانه", ["/"]),
+    },
+    "next.example.com": {
+        "/": _sample_page("سایت Next.js نمونه با عنوانی که کافی است", ["/tennis-court", "/lessons"]),
+        "/tennis-court": _sample_page("زمین تنیس", ["/"]),
+        "/lessons": _sample_page("آموزش تنیس", ["/"]),
+    },
+}
+
+
+def sample_fetcher():
+    """The two sample sites from outside: the shop has a robots.txt, the other nothing."""
+
+    def fetch(url, limit):
+        parts = urlsplit(url)
+        path = parts.path or "/"
+        if parts.hostname == "shop.example.com" and path == "/robots.txt":
+            return Fetched(status=200, body=b"User-agent: *\nDisallow: /cart/\n", content_type="text/plain")
+        page = SAMPLE_PUBLIC.get(parts.hostname or "", {}).get(path)
+        if page is None:
+            return Fetched(status=404, final_url=url)
+        return Fetched(status=200, body=page, content_type="text/html; charset=utf-8", final_url=url)
+
+    return fetch
 
 
 class SampleAdapters:
@@ -433,6 +481,15 @@ def build():
     handlers.register(EXECUTE_ACTION_JOB_TYPE, build_execute_action_handler(action_store=actions, site_store=sites, adapter_factory=adapters))
     handlers.register(ROLLBACK_ACTION_JOB_TYPE, build_rollback_action_handler(action_store=actions, site_store=sites, adapter_factory=adapters))
     handlers.register(SEO_RUN_JOB_TYPE, sample_run_handler(runs=runs, actions=actions, sites=sites, adapters=adapters))
+    scans, files = SiteScanStore(repository), SiteFileStore(repository)
+    public = sample_fetcher()
+    handlers.register(SITE_SCAN_JOB_TYPE, build_site_scan_handler(
+        site_store=sites, scan_store=scans, file_store=files,
+        crawler_factory=lambda: SiteCrawler(fetcher=public, delay_seconds=0.05),
+    ))
+    handlers.register(SITE_FILE_JOB_TYPE, build_site_file_handler(
+        site_store=sites, file_store=files, fetcher=public,
+    ))
     scheduler = JobScheduler(store=jobs, handlers=handlers)
     threading.Thread(
         target=scheduler.run_forever, kwargs={"poll_interval_seconds": 0.5, "stop_event": threading.Event()}, daemon=True,
@@ -451,7 +508,7 @@ def build():
             )
             for url in ("sc-domain:shop.example.com", "sc-domain:next.example.com")
         ],
-        warehouse=warehouse, warehouse_reports=reports, auth=auth,
+        warehouse=warehouse, warehouse_reports=reports, auth=auth, scan_store=scans, file_store=files,
         dashboard_url="/app/", tenant_name=lambda _tenant: "فروشگاه نمونه (توسعه)",
     ))
 

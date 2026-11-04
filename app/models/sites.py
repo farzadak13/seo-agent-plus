@@ -11,6 +11,9 @@ class SiteStatus(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
     ERROR = "error"
+    # Taken out of the dashboard by its owner. The record and everything hanging
+    # off it stay: the history of what was done to a site is not ours to erase.
+    REMOVED = "removed"
 
 
 class SecretProvider(StrEnum):
