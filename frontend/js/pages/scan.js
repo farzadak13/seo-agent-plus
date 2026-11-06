@@ -99,6 +99,12 @@ function filePanel(change, { base, act, problem }) {
   );
 }
 
+// The middle page's time: one slow page does not make the site slow.
+function medianMs(pages) {
+  const times = pages.map((page) => page.speed?.fetch_ms).filter((ms) => typeof ms === "number").sort((a, b) => a - b);
+  return times.length ? times[Math.floor(times.length / 2)] : null;
+}
+
 function issueGroups(issues) {
   const groups = new Map();
   for (const issue of issues) {
@@ -285,6 +291,7 @@ export async function scanPage(container, { site, alive }) {
     }
 
     const count = (severity) => scan.issues.filter((issue) => issue.severity === severity).length;
+    const usual = medianMs(scan.pages);
     const fact = (label, value) => h("div", { class: "measure-cell" },
       h("div", { class: "measure-label", text: label }), h("div", { class: "measure-value", text: value }));
     area.append(
@@ -300,6 +307,7 @@ export async function scanPage(container, { site, alive }) {
           fact("صفحهٔ خوانده‌شده", fmt.int(scan.pages.filter((page) => page.status_code !== null).length)),
           fact("مشکل جدی", fmt.int(count("critical"))),
           fact("قابل بهبود", fmt.int(count("warning"))),
+          usual === null ? null : fact("زمان پاسخ معمول (از سرور ما)", `${fmt.pos(usual / 1000)} ثانیه`),
           fact("نقشهٔ سایت", scan.sitemap_urls.length ? `${fmt.int(scan.sitemap_page_count)} صفحه` : "ندارد"),
           fact("robots.txt", scan.robots_text !== null ? "دارد" : "ندارد"),
         ),

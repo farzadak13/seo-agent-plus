@@ -41,6 +41,30 @@ class ScanIssue(BaseModel):
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
+class PageSpeedSignals(BaseModel):
+    """What the page's own HTML and its answer say about speed, without a browser.
+
+    Not a Lighthouse score: the signals a page's markup gives away, read on the
+    same visit the scan makes anyway, so a site is not asked for anything more.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # From the request to the last byte of the HTML, as this server saw it.
+    fetch_ms: int = Field(ge=0)
+    html_kb: int = Field(ge=0)
+    # <script src> in <head> with neither async nor defer, nor type=module.
+    blocking_scripts: int = Field(default=0, ge=0)
+    stylesheets: int = Field(default=0, ge=0)
+    images: int = Field(default=0, ge=0)
+    # Without width and height: the page jumps as they load (layout shift).
+    images_unsized: int = Field(default=0, ge=0)
+    # Past the first few, without loading="lazy".
+    images_not_lazy: int = Field(default=0, ge=0)
+    # .jpg, .jpeg, .png, .gif where WebP or AVIF would be a fraction of the size.
+    images_old_format: int = Field(default=0, ge=0)
+
+
 class ScannedPage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -58,6 +82,7 @@ class ScannedPage(BaseModel):
     robots_blocked: bool = False
     in_sitemap: bool = False
     word_count: int = 0
+    speed: PageSpeedSignals | None = None
 
 
 class SiteScan(BaseModel):

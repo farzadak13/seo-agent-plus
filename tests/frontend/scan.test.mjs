@@ -215,3 +215,18 @@ test("the summary leads with the health score", async (t) => {
   assert.ok(container.textContent.includes("امتیاز سلامت"));
   assert.ok(container.textContent.includes("۸۲ از ۱۰۰"));
 });
+
+
+test("the summary gives the usual response time, not the slowest", async (t) => {
+  server.scan = scan({ pages: [600, 900, 4000].map((ms, n) => ({ url: `https://shop.test/${n}`, status_code: 200, speed: { fetch_ms: ms, html_kb: 10 } })) });
+  const container = await open(t);
+  assert.ok(container.textContent.includes("زمان پاسخ معمول"));
+  assert.ok(container.textContent.includes("۰٫۹ ثانیه"));
+});
+
+
+test("an old scan without speed shows no response time", async (t) => {
+  server.scan = scan();
+  const container = await open(t);
+  assert.ok(!container.textContent.includes("زمان پاسخ معمول"));
+});

@@ -1466,3 +1466,74 @@ def test_a_finished_scan_carries_its_score():
 def test_a_site_that_did_not_answer_has_no_score():
     world = World(FakeSite({"/": Fetched(status=None)}))
     assert world.scan()["health_score"] is None
+
+
+# ---- speed, from the page's own answer and markup --------------------------------
+
+
+def test_the_speed_signals_are_read_from_the_page_itself():
+    head = (
+        '<script src="/a.js"></script><script src="/b.js" defer></script><script src="/c.js" async></script>'
+        '<script src="/d.js" type="module"></script><script src="/e.js"></script><script src="/f.js"></script>'
+        '<link rel="stylesheet" href="/s.css">'
+    )
+    images = "".join(f'<img src="/p{n}.jpg">' for n in range(7)) + '<img src="/q.webp" width="10" height="10" loading="lazy">'
+    site = FakeSite({"/": html(head=head, body="کلمه " * 150 + images)})
+    page = crawl(site).pages[0]
+    speed = page.speed
+    assert (speed.blocking_scripts, speed.stylesheets, speed.images) == (3, 1, 8)
+    assert (speed.images_unsized, speed.images_not_lazy, speed.images_old_format) == (7, 5, 7)
+    codes_found = codes(build_issues(crawl(site)), url=page.url)
+    assert {"render_blocking_scripts", "images_without_size", "images_not_lazy", "old_image_formats"} <= codes_found
+    assert "slow_response" not in codes_found and "heavy_html" not in codes_found
+
+
+def test_a_slow_site_is_judged_by_its_middle_page_not_one_page():
+    from app.scan.issues import _slow_site
+
+    def page(ms, n):
+        return ScannedPage(url=f"{BASE}{n}", status_code=200, speed={"fetch_ms": ms, "html_kb": 20})
+
+    assert _slow_site([page(900, 1), page(9000, 2), page(1200, 3)]) == []
+    slow = _slow_site([page(3000, 1), page(2600, 2), page(900, 3)])
+    assert [(issue.code, issue.url, issue.detail) for issue in slow] == [("slow_response", None, {"ms": 2600})]
+
+
+def test_what_the_browser_does_not_load_is_not_counted():
+    lazy_copy = '<img data-src="/a.jpg" class="lazyload"><noscript><img src="/a.jpg"></noscript>'
+    pictures = (
+        '<picture><source type="image/webp" srcset="/b.webp"><img src="/b.jpg" width="1" height="1"></picture>'
+    )
+    body = "کلمه " * 150 + lazy_copy * 6 + pictures * 6 + "<template><img src='/t.png'></template>"
+    page = crawl(FakeSite({"/": html(body=body)})).pages[0]
+    assert page.speed.images == 12, "the <noscript> and <template> copies are not more images"
+    assert page.speed.images_not_lazy == 6, "data-src counts as lazy; the six pictures are not"
+    assert page.speed.images_old_format == 6, "a <picture> with a WebP source is not an old format"
+
+
+def test_a_page_without_head_or_body_tags_still_knows_where_its_body_begins():
+    raw = (
+        "<!doctype html><title>" + GOOD_TITLE + "</title><script src='/head.js'></script>"
+        "<h1>x</h1>" + "کلمه " * 150 + "<script src='/1.js'></script><script src='/2.js'></script>"
+        "<script src='/3.js'></script><script src='/rocket.js' type='rocketlazyloadscript'></script>"
+    ).encode("utf-8")
+    page = crawl(FakeSite({"/": raw})).pages[0]
+    assert page.speed.blocking_scripts == 1
+
+
+def test_heavy_html_and_the_time_taken_are_recorded():
+    from app.scan.issues import speed_issues
+
+    now = {"t": 0.0}
+    site = FakeSite({"/": html(body="کلمه " * 110_000)})
+
+    def slow_home(url, limit):
+        if url == BASE:
+            now["t"] += 3.25  # the page takes 3.25 seconds; nothing else does
+        return site(url, limit)
+
+    result = SiteCrawler(fetcher=slow_home, delay_seconds=0, sleep=lambda _: None, clock=lambda: now["t"]).crawl(BASE)
+    page = result.pages[0]
+    assert page.speed.fetch_ms == 3250
+    assert page.speed.html_kb >= 500
+    assert "heavy_html" in {issue.code for issue in speed_issues(page)}

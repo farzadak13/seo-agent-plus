@@ -13,6 +13,16 @@ TITLE_TOO_SHORT = 15
 TITLE_TOO_LONG = 70
 DESCRIPTION_TOO_LONG = 170
 THIN_WORDS = 100
+# Speed, from the page's own answer and markup (app.models.site_scan.PageSpeedSignals).
+# Generous on purpose: this server is not where the customer's visitors are,
+# so only what is slow by any measure is called slow.
+# For the site's middle page, not any one page: one slow answer is a moment, not the site.
+SLOW_MS = 2_500
+HEAVY_HTML_KB = 500
+BLOCKING_SCRIPTS = 3
+UNSIZED_IMAGES = 3
+NOT_LAZY_IMAGES = 5
+OLD_FORMAT_IMAGES = 5
 
 _ORDER = {IssueSeverity.CRITICAL: 0, IssueSeverity.WARNING: 1, IssueSeverity.INFO: 2}
 
@@ -38,6 +48,9 @@ def build_issues(result: CrawlResult) -> list[ScanIssue]:
     issues.extend(_site_issues(result))
     for page in result.pages:
         issues.extend(_page_issues(page))
+    for page in result.pages:
+        issues.extend(speed_issues(page))
+    issues.extend(_slow_site(result.pages))
     issues.extend(_duplicates(result.pages, "title", "duplicate_title"))
     issues.extend(_duplicates(result.pages, "meta_description", "duplicate_meta_description"))
     return sorted(issues, key=lambda item: (_ORDER[item.severity], item.code, item.url or ""))
@@ -72,6 +85,34 @@ def _site_issues(result: CrawlResult) -> list[ScanIssue]:
         for url in missing:
             found.append(ScanIssue(code="not_in_sitemap", severity=IssueSeverity.INFO, url=url))
     return found
+
+
+def speed_issues(page: ScannedPage) -> list[ScanIssue]:
+    """What the page's answer and markup say is slowing it; each with its own number."""
+    speed = page.speed
+    if speed is None or page.status_code != 200:
+        return []
+    url = page.url
+    # Information, not warnings: they slow a page, they do not keep it from Google,
+    # and the health score is about what is in Google's way.
+    checks = [
+        ("heavy_html", IssueSeverity.INFO, speed.html_kb >= HEAVY_HTML_KB, {"kb": speed.html_kb}),
+        ("render_blocking_scripts", IssueSeverity.INFO, speed.blocking_scripts >= BLOCKING_SCRIPTS, {"count": speed.blocking_scripts}),
+        ("images_without_size", IssueSeverity.INFO, speed.images_unsized >= UNSIZED_IMAGES, {"count": speed.images_unsized}),
+        ("images_not_lazy", IssueSeverity.INFO, speed.images_not_lazy >= NOT_LAZY_IMAGES, {"count": speed.images_not_lazy}),
+        ("old_image_formats", IssueSeverity.INFO, speed.images_old_format >= OLD_FORMAT_IMAGES, {"count": speed.images_old_format}),
+    ]
+    return [ScanIssue(code=code, severity=severity, url=url, detail=detail) for code, severity, hit, detail in checks if hit]
+
+
+def _slow_site(pages: list[ScannedPage]) -> list[ScanIssue]:
+    times = sorted(page.speed.fetch_ms for page in pages if page.speed is not None and page.status_code == 200)
+    if not times:
+        return []
+    middle = times[len(times) // 2]
+    if middle < SLOW_MS:
+        return []
+    return [ScanIssue(code="slow_response", severity=IssueSeverity.WARNING, url=None, detail={"ms": middle})]
 
 
 def _page_issues(page: ScannedPage) -> list[ScanIssue]:

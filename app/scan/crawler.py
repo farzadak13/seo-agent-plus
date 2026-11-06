@@ -23,7 +23,7 @@ from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 from urllib.request import Request
 from urllib.robotparser import RobotFileParser
 
-from app.models.site_scan import ScannedPage
+from app.models.site_scan import PageSpeedSignals, ScannedPage
 from app.net.guard import UnsafeAddressError, open_public, same_site
 from app.normalization.url import canonicalize_url
 from app.scan.robots_rules import google_allows
@@ -177,12 +177,24 @@ class _PageParser(HTMLParser):
         self.noindex = False
         self.links: list[str] = []
         self.words = 0
+        # Speed signals (app.models.site_scan.PageSpeedSignals).
+        self.in_head = True
+        self.blocking_scripts = 0
+        self.stylesheets = 0
+        self.images = 0
+        self.images_unsized = 0
+        self.images_not_lazy = 0
+        self.images_old_format = 0
+        # Inside <picture> with a WebP or AVIF <source>: its <img> is only the fallback.
+        self._picture = False
+        self._picture_modern = False
         self._capture: str | None = None
         self._buffer: list[str] = []
         self._skip_depth = 0
 
     def handle_starttag(self, tag, attrs):
         values = {name: value or "" for name, value in attrs}
+        self._note_speed(tag, values)
         if tag in self._SKIPPED_TEXT:
             self._skip_depth += 1
             return
@@ -203,7 +215,53 @@ class _PageParser(HTMLParser):
             if self.h1 is None and self._capture is None:
                 self._capture, self._buffer = "h1", []
 
+    # The first images are usually above the fold, where lazy loading only delays them.
+    EAGER_IMAGES = 2
+    _OLD_FORMATS = (".jpg", ".jpeg", ".png", ".gif")
+    _MODERN = ("webp", "avif")
+    # What may stand in <head>; any other tag means the body has begun, <body> or not.
+    _HEAD_TAGS = frozenset({"html", "head", "title", "meta", "link", "script", "style", "base", "noscript", "template"})
+    _JS_TYPES = frozenset({"", "text/javascript", "application/javascript", "application/ecmascript", "text/ecmascript"})
+
+    def _note_speed(self, tag, values):
+        # A lazy-load plugin's <noscript> copy, or a <template>, is not what the browser loads.
+        if self._skip_depth:
+            return
+        if tag not in self._HEAD_TAGS:
+            self.in_head = False
+        if tag == "script" and values.get("src") and self.in_head:
+            kind = values.get("type", "").strip().lower()
+            if kind in self._JS_TYPES and not ({"async", "defer", "nomodule"} & set(values)):
+                self.blocking_scripts += 1
+        elif tag == "link" and "stylesheet" in values.get("rel", "").lower().split():
+            self.stylesheets += 1
+        elif tag == "picture":
+            self._picture, self._picture_modern = True, False
+        elif tag == "source" and self._picture:
+            kind = values.get("type", "").lower() + " " + values.get("srcset", "").lower()
+            if any(modern in kind for modern in self._MODERN):
+                self._picture_modern = True
+        elif tag == "img":
+            self.images += 1
+            if not (values.get("width") and values.get("height")):
+                self.images_unsized += 1
+            # A lazy-load plugin's way too: the real address waits in data-src.
+            lazy = (
+                values.get("loading", "").lower() == "lazy"
+                or any(name in values for name in ("data-src", "data-lazy-src", "data-srcset"))
+                or "lazyload" in values.get("class", "").lower().split()
+            )
+            if self.images > self.EAGER_IMAGES and not lazy:
+                self.images_not_lazy += 1
+            source = (values.get("data-src") or values.get("data-lazy-src") or values.get("src") or "").split("?", 1)[0].lower()
+            if source.endswith(self._OLD_FORMATS) and not (self._picture and self._picture_modern):
+                self.images_old_format += 1
+
     def handle_endtag(self, tag):
+        if tag == "head":
+            self.in_head = False
+        elif tag == "picture":
+            self._picture = self._picture_modern = False
         if tag in self._SKIPPED_TEXT and self._skip_depth:
             self._skip_depth -= 1
             return
@@ -501,7 +559,9 @@ class SiteCrawler:
         # A site that keeps this scanner out, and not Google, gets its wish.
         if not always and not robots.can_fetch(ROBOTS_NAME, url):
             return None
+        started = self._clock()
         answer = self._fetch(url, MAX_BODY_BYTES)
+        fetch_ms = max(0, int((self._clock() - started) * 1000))
         redirected = answer.final_url if answer.final_url and _identity(answer.final_url) != _identity(url) else None
         if answer.status != 200:
             return ScannedPage(url=url, status_code=answer.status, redirected_to=redirected, in_sitemap=in_sitemap), []
@@ -531,6 +591,16 @@ class SiteCrawler:
                 robots_blocked=blocked,
                 in_sitemap=in_sitemap,
                 word_count=parser.words,
+                speed=PageSpeedSignals(
+                    fetch_ms=fetch_ms,
+                    html_kb=len(answer.body) // 1024,
+                    blocking_scripts=parser.blocking_scripts,
+                    stylesheets=parser.stylesheets,
+                    images=parser.images,
+                    images_unsized=parser.images_unsized,
+                    images_not_lazy=parser.images_not_lazy,
+                    images_old_format=parser.images_old_format,
+                ),
             ),
             parser.links,
         )
