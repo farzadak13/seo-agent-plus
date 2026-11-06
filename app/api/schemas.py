@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 from app.accounts.models import LoginMethod
+from app.action.fields import field_of
 from app.models.jobs import JobStatus
 from app.models.runs import SEORunStatus
 from app.models.sites import SiteStatus
@@ -245,6 +246,9 @@ class ActionResponse(BaseModel):
     run_id: str
     proposal_id: str | None
     action_type: str
+    # What the change is about: "title" or "description". current_title and
+    # proposed_title carry that field's text, whichever it is.
+    field: str = "title"
     status: str
     normalized_url: str
     normalized_query: str
@@ -271,11 +275,12 @@ class ActionResponse(BaseModel):
             run_id=managed.run_id,
             proposal_id=managed.proposal_id,
             action_type=action.action_type.value,
+            field=field_of(action).name,
             status=action.status.value,
             normalized_url=action.normalized_url,
             normalized_query=action.normalized_query,
             current_title=managed.observed_value,
-            proposed_title=action.parameters.get("recommended_title"),
+            proposed_title=action.parameters.get(f"recommended_{field_of(action).name}"),
             alternative_titles=list(action.parameters.get("alternative_titles") or []),
             edited_by_reviewer=bool(action.parameters.get("edited_by_reviewer")),
             applied=managed.applied.model_dump() if managed.applied else None,

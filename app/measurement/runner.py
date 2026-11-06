@@ -80,7 +80,18 @@ POLICIES: dict[ActionType, OutcomeEvaluationPolicy] = {
         max_relative_regression=0.10,
         inconclusive_within_band=True,
     ),
+    # A description shows under every search the page appears for, so it is
+    # measured on the page's CTR across all of them, with the same band.
+    ActionType.OPTIMIZE_META_DESCRIPTION: OutcomeEvaluationPolicy(
+        primary_metric=OutcomeMetric.CTR,
+        min_relative_improvement=0.10,
+        max_relative_regression=0.10,
+        inconclusive_within_band=True,
+    ),
 }
+PAGE_LEVEL = frozenset({ActionType.OPTIMIZE_META_DESCRIPTION})
+# What a page-level measurement is recorded under in place of one query.
+ALL_QUERIES = "(all queries)"
 
 _WATCHED = frozenset({ActionStatus.MEASUREMENT_WINDOW_ACTIVE, ActionStatus.EVALUATING})
 
@@ -241,6 +252,10 @@ class MeasurementRunner:
         with self._transaction():
             self._save_outcome(managed, outcome)
             settled = self._actions.update(self._apply(managed, outcome))
+            # What is learned is per query (stage 39); a page-level change has
+            # its outcome recorded, and nothing to teach a query.
+            if managed.action.action_type in PAGE_LEVEL:
+                return True
             self._feedback.add(
                 build_feedback_event(
                     feedback_id=feedback_id_for(managed.action_id),
@@ -267,6 +282,9 @@ class MeasurementRunner:
         action = managed.action
         site_id, url, query = action.site_id, action.normalized_url, action.normalized_query
         start, end = windows.baseline_start, windows.current_end
+        page_level = action.action_type in PAGE_LEVEL
+        if page_level:
+            query = ALL_QUERIES
         observations = build_observations(
             site_id=site_id,
             normalized_url=url,
@@ -275,7 +293,11 @@ class MeasurementRunner:
             end=end,
             stored_days=stored,
             capped_days=capped,
-            query_rows=self._warehouse.query_days(site_id=site_id, url=url, query=query, start=start, end=end),
+            query_rows=(
+                self._warehouse.page_totals(site_id=site_id, url=url, start=start, end=end)
+                if page_level
+                else self._warehouse.query_days(site_id=site_id, url=url, query=query, start=start, end=end)
+            ),
             page_days=self._warehouse.page_days(site_id=site_id, url=url, start=start, end=end),
         )
         measurement = measure_action(

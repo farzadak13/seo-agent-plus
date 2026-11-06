@@ -39,6 +39,8 @@ from app.scan.handler import (
 )
 from app.scan.store import SiteFileStore, SiteScanStore
 from app.reasoning.keywords import KeywordSuggester
+from app.descriptions.handler import DESCRIPTION_JOB_TYPE, build_description_handler
+from app.descriptions.writer import DescriptionWriter
 from app.targets.handler import (
     RANK_ROUND_SECONDS,
     TARGET_SUGGEST_JOB_TYPE,
@@ -311,6 +313,15 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
                 proposal_store=TitleProposalStore(repository),
             ),
         )
+        handlers.register(
+            DESCRIPTION_JOB_TYPE,
+            build_description_handler(
+                scan_store=scan_store,
+                action_store=action_store,
+                target_store=target_store,
+                writer=DescriptionWriter(transport=build_arvan_transport(config, secret_resolver=secret_resolver)),
+            ),
+        )
         rank_loop = WarehouseLoop(
             RankTracker(
                 target_store=target_store,
@@ -416,6 +427,7 @@ def create_runtime_app(config: RuntimeConfig | None = None):
             billing=container.billing,
             otp=container.otp,
             signup_enabled=resolved_config.signup_enabled,
+            descriptions_enabled=container.title_workflow is not None,
             dashboard_url=resolved_config.dashboard_url or "/",
             allowed_origins=resolved_config.dashboard_origins,
             tenant_name=lambda tenant_id: getattr(

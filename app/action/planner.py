@@ -18,6 +18,9 @@ STRATEGY_TO_ACTION: dict[
     StrategyType.SERP_TITLE_OPTIMIZATION: (
         ActionType.OPTIMIZE_TITLE
     ),
+    StrategyType.META_DESCRIPTION_OPTIMIZATION: (
+        ActionType.OPTIMIZE_META_DESCRIPTION
+    ),
     StrategyType.CANNIBALIZATION_INVESTIGATION: (
         ActionType.INVESTIGATE_CANNIBALIZATION
     ),
@@ -50,6 +53,7 @@ def _requires_approval(
 ) -> bool:
     if action_type in {
         ActionType.OPTIMIZE_TITLE,
+        ActionType.OPTIMIZE_META_DESCRIPTION,
         ActionType.IMPROVE_CONTENT_DEPTH,
     }:
         return True

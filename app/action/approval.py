@@ -8,6 +8,7 @@ job that carries it out.
 from __future__ import annotations
 
 from app.models.action_lifecycle import transition_action
+from app.action.fields import field_of
 from app.models.actions import Action, ActionStatus, ActionType
 from app.models.managed_action import ActionEvent, ManagedAction
 
@@ -110,18 +111,20 @@ def approve(
     if note:
         detail["note"] = note
     if title is not None:
-        edited = _clean_title(title)
-        if edited != action.parameters.get("recommended_title"):
+        # ``title`` is the reviewer's text for whatever field the change is about.
+        field = field_of(action)
+        edited = _clean(title, field)
+        if edited != field.recommended(action):
             # One of the model's own other candidates is a choice, not an edit.
             chosen = edited in (action.parameters.get("alternative_titles") or [])
-            detail["proposed_title"] = action.parameters.get("recommended_title")
-            detail["chosen_alternative" if chosen else "edited_title"] = edited
+            detail[f"proposed_{field.name}"] = field.recommended(action)
+            detail["chosen_alternative" if chosen else f"edited_{field.name}"] = edited
             action = action.model_copy(
                 update={
                     "parameters": {
                         **action.parameters,
-                        "recommended_title": edited,
-                        "expected_title": edited,
+                        f"recommended_{field.name}": edited,
+                        f"expected_{field.name}": edited,
                         "edited_by_reviewer": not chosen,
                         "chosen_alternative": chosen,
                     }
@@ -165,6 +168,15 @@ def _require_status(managed: ManagedAction, allowed: set[ActionStatus], verb: st
         raise ApprovalError(
             f"An action in status {managed.status.value} cannot be {verb}."
         )
+
+
+def _clean(value: str, field) -> str:
+    cleaned = " ".join(str(value).split())
+    if not cleaned:
+        raise ApprovalError(f"The {field.label} must not be empty.")
+    if len(cleaned) > field.max_length:
+        raise ApprovalError(f"The {field.label} must be at most {field.max_length} characters.")
+    return cleaned
 
 
 def _clean_title(title: str) -> str:

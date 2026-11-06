@@ -10,6 +10,9 @@ ACTION_REQUIRED_CAPABILITIES: dict[
     ActionType.OPTIMIZE_TITLE: [
         ExecutionCapability.UPDATE_TITLE,
     ],
+    ActionType.OPTIMIZE_META_DESCRIPTION: [
+        ExecutionCapability.UPDATE_META_DESCRIPTION,
+    ],
     ActionType.INVESTIGATE_CANNIBALIZATION: [
         ExecutionCapability.READ_PAGE,
     ],

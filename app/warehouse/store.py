@@ -201,6 +201,20 @@ class PostgresWarehouse:
                 for day, clicks, impressions, position_sum in cursor.fetchall()
             }
 
+    def page_totals(
+        self, *, site_id: str, url: str, start: date, end: date
+    ) -> dict[date, tuple[int, int, float]]:
+        """{day: (clicks, impressions, position_sum)} of one page on every query, devices summed."""
+        with self._transaction() as cursor:
+            cursor.execute(
+                "SELECT d.day, sum(d.clicks), sum(d.impressions), sum(d.position_sum)"
+                " FROM gsc_daily_pages d JOIN gsc_pages p ON p.page_id = d.page_id"
+                " WHERE d.site_id = %s AND p.url = %s AND d.day BETWEEN %s AND %s"
+                " GROUP BY d.day",
+                (site_id, url, start, end),
+            )
+            return {row[0]: (int(row[1]), int(row[2]), float(row[3])) for row in cursor.fetchall()}
+
     def page_days(self, *, site_id: str, url: str, start: date, end: date) -> set[date]:
         """Days on which the page had any impression at all, on any query."""
         with self._transaction() as cursor:

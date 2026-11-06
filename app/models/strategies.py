@@ -8,6 +8,7 @@ from app.models.snapshots import SnapshotMetadata
 
 class StrategyType(StrEnum):
     SERP_TITLE_OPTIMIZATION = "serp_title_optimization"
+    META_DESCRIPTION_OPTIMIZATION = "meta_description_optimization"
     CANNIBALIZATION_INVESTIGATION = "cannibalization_investigation"
     INTERNAL_LINKING = "internal_linking"
     CONTENT_DEPTH_IMPROVEMENT = "content_depth_improvement"

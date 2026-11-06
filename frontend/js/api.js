@@ -47,6 +47,7 @@ export async function api(path, { method = "GET", body, query, quiet = false } =
 // not listed falls back to a plain sentence for its status, never to raw text.
 const KNOWN = [
   ["Too many sites scanned", "امروز سایت‌های زیادی بررسی شده است. فردا دوباره امتحان کنید."],
+  ["Too many descriptions asked for today", "امروز به سقف پیشنهاد توضیحات رسیده‌اید. فردا دوباره امتحان کنید."],
   ["Too many codes sent to this number", "امروز کدهای زیادی به این شماره فرستاده شده است. فردا دوباره امتحان کنید."],
   ["Too many codes requested", "درخواست کد زیاد بوده است. کمی بعد دوباره امتحان کنید."],
   ["Too many tries", "تلاش‌ها زیاد بوده است. کمی بعد دوباره امتحان کنید."],
@@ -90,6 +91,9 @@ const KNOWN = [
   ["checked a moment ago", "همین چند لحظه پیش بررسی شد. کمی بعد دوباره امتحان کنید."],
   ["not waiting to be checked", "این مورد در انتظار بررسی نیست."],
   ["still under way","یک تغییر روی این سایت هنوز در جریان است. صبر کنید تمام شود یا آن را برگردانید."],
+  ["description for this page is already waiting", "برای این صفحه یک پیشنهاد توضیحات در صندوق تأیید منتظر است."],
+  ["can change meta descriptions", "اتصال فعلی سایتتان هنوز نمی‌تواند توضیحات متا را تغییر دهد. نسخهٔ تازهٔ افزونهٔ هوشیار سئو به‌زودی این امکان را می‌دهد."],
+  ["Meta descriptions are not configured", "پیشنهاد توضیحات روی این سرور فعال نیست."],
   ["Scan the site first", "اول سایت را بررسی کنید تا صفحه‌هایش را پیدا کنیم و برای هر کدام کلمه پیشنهاد بدهیم."],
   ["title for this keyword is already being made", "عنوان این کلمه همین الان در حال آماده شدن است."],
   ["title for this keyword was asked for a moment ago", "همین چند دقیقه پیش برای این کلمه عنوان خواسته شد. کمی بعد دوباره امتحان کنید."],

@@ -45,20 +45,38 @@ function rollbackState(action, manual) {
   return "idle";
 }
 
+// The words for what a change is about: its title, or its meta description.
+const WORDS = {
+  title: {
+    noun: "عنوان", of: "عنوان", current: "عنوان فعلی", previous: "عنوان قبلی", fresh: "عنوان تازه", proposed: "عنوان پیشنهادی",
+    copy: "کپی عنوان", approve: "تأیید این عنوان", own: "عنوان خودتان را بنویسید", ownLabel: "عنوان دلخواه",
+    put: "این عنوان را در تنظیمات همین صفحهٔ سایتتان بگذارید:", restore: "این عنوان قبلی را در سایتتان برگردانید:",
+    notYet: "هنوز عنوان تازه روی صفحهٔ عمومی دیده نمی‌شود.", back: "عنوان قبلی برگردد؟", max: 300,
+  },
+  description: {
+    noun: "توضیحات متا", of: "توضیحات متای", current: "توضیحات فعلی", previous: "توضیحات قبلی", fresh: "توضیحات تازه", proposed: "توضیحات پیشنهادی",
+    copy: "کپی توضیحات", approve: "تأیید این توضیحات", own: "توضیحات خودتان را بنویسید", ownLabel: "توضیحات دلخواه",
+    put: "این متن را در تنظیمات سئوی همین صفحه (توضیحات متا) بگذارید:", restore: "این توضیحات قبلی را در سایتتان برگردانید:",
+    notYet: "هنوز توضیحات تازه روی صفحهٔ عمومی دیده نمی‌شود.", back: "توضیحات قبلی برگردد؟", max: 170,
+  },
+};
+export const wordsFor = (action) => WORDS[action.field] || WORDS.title;
+
 function errorText(action) {
   if (!action.error) return null;
   const error = action.error;
-  if (error.includes("title changed") || error.includes("was changed after")) return "عنوان صفحه بعد از این کار عوض شده است؛ چیزی روی سایت بازنویسی نشد.";
-  if (error.includes("does not show")) return "عنوان نوشته شد ولی صفحه آن را نشان نمی‌دهد.";
-  if (error.includes("not known")) return "عنوان قبلی این صفحه ثبت نشده است؛ آن را خودتان در سایت برگردانید.";
-  if (error.includes("cannot change titles")) return "این اتصال نمی‌تواند عنوان را تغییر دهد.";
+  const { noun, of } = wordsFor(action);
+  if (error.includes("changed after") || error.includes("was changed after")) return `${of} صفحه بعد از این کار عوض شده است؛ چیزی روی سایت بازنویسی نشد.`;
+  if (error.includes("does not show")) return `${noun} نوشته شد ولی صفحه آن را نشان نمی‌دهد.`;
+  if (error.includes("not known")) return `${of} قبلی این صفحه ثبت نشده است؛ آن را خودتان در سایت برگردانید.`;
+  if (error.includes("cannot change")) return `این اتصال نمی‌تواند ${noun} را تغییر دهد.`;
   if (error.includes("refused")) return "سایت این تغییر را نپذیرفت. اتصال سایت را در تنظیمات پروژه بررسی کنید.";
   return "این مرحله با خطا روبه‌رو شد. اگر ادامه داشت با پشتیبانی تماس بگیرید.";
 }
 
-function copyButton(text) {
+function copyButton(text, label = "کپی عنوان") {
   const button = h("button", {
-    class: "btn", type: "button", text: "کپی عنوان",
+    class: "btn", type: "button", text: label,
     onclick: async () => {
       try {
         await navigator.clipboard.writeText(text);
@@ -149,14 +167,15 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
     body.push(awaitingApproval(action, { manual, act, refreshSoon, drafts }));
   } else {
     const applied = action.applied;
+    const words = wordsFor(action);
     body.push(h("div", { class: "title-compare" }, action.rolled_back
       ? [
-          titleRow("عنوان فعلی", applied.previous_value, true),
+          titleRow(words.current, applied.previous_value, true),
           titleRow("برگردانده شد", applied.new_value),
         ]
       : [
-          titleRow(applied ? "عنوان قبلی" : "عنوان فعلی", applied?.previous_value ?? action.current_title),
-          titleRow(applied ? "عنوان تازه" : "پیشنهاد", applied?.new_value ?? action.proposed_title, Boolean(applied)),
+          titleRow(applied ? words.previous : words.current, applied?.previous_value ?? action.current_title),
+          titleRow(applied ? words.fresh : "پیشنهاد", applied?.new_value ?? action.proposed_title, Boolean(applied)),
         ]));
   }
 
@@ -176,14 +195,15 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
       class: "btn", type: "button", text: "منصرف شدم",
       onclick: () => act(reject, actionPath(action, "reject"), {}, refreshSoon),
     });
+    const words = wordsFor(action);
     body.push(h("div", { class: "apply-box" },
-      "این عنوان را در تنظیمات همین صفحهٔ سایتتان بگذارید:",
+      words.put,
       h("div", { class: "apply-title", text: title }),
       found ? h("div", { class: "small muted" }, "الان صفحه این را نشان می‌دهد: ", found) : null,
-      checked ? h("div", { class: "small", text: "هنوز عنوان تازه روی صفحهٔ عمومی دیده نمی‌شود. اگر سایت کش دارد، آن را پاک کنید یا چند دقیقه بعد دوباره بررسی کنید." }) : null,
+      checked ? h("div", { class: "small", text: `${words.notYet} اگر سایت کش دارد، آن را پاک کنید یا چند دقیقه بعد دوباره بررسی کنید.` }) : null,
       checking ? h("div", { class: "small", text: "در حال بررسی صفحه…" }) : null,
     ));
-    body.push(h("div", { class: "approval-actions" }, check, copyButton(title), reject));
+    body.push(h("div", { class: "approval-actions" }, check, copyButton(title, words.copy), reject));
   } else if (APPLYING.has(action.status) && !action.error) {
     body.push(h("div", { class: "notice", text: "در حال اعمال و بررسی روی سایت…" }));
   } else if (action.status === "executed" && manual) {
@@ -211,13 +231,20 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
     const restoring = lastEvent(action, "waiting_for_customer_to_restore");
     const rollback = rollbackState(action, manual);
     if (rollback === "running" && restoring && manual) {
-      const title = restoring.detail.restore_title;
+      const words = wordsFor(action);
+      const title = restoring.detail[`restore_${action.field || "title"}`];
       const again = h("button", {
         class: "btn btn-primary", type: "button", text: "برگرداندم، بررسی کن",
         onclick: () => act(again, actionPath(action, "rollback"), {}, refreshSoon),
       });
-      body.push(h("div", { class: "apply-box" }, "این عنوان قبلی را در سایتتان برگردانید:", h("div", { class: "apply-title", text: title })));
-      body.push(h("div", { class: "approval-actions" }, again, copyButton(title)));
+      if (title) {
+        body.push(h("div", { class: "apply-box" }, words.restore, h("div", { class: "apply-title", text: title })));
+        body.push(h("div", { class: "approval-actions" }, again, copyButton(title, words.copy)));
+      } else {
+        // The page had none before: undoing is clearing it.
+        body.push(h("div", { class: "apply-box", text: `${words.of} این صفحه قبلاً خالی بود؛ آن را از تنظیمات سئوی صفحه پاک کنید.` }));
+        body.push(h("div", { class: "approval-actions" }, again));
+      }
     } else if (rollback === "running") {
       body.push(h("div", { class: "notice", text: "در حال برگرداندن تغییر…" }));
     } else {
@@ -231,7 +258,7 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
             onclick: () => act(yes, actionPath(action, "rollback"), {}, refreshSoon),
           });
           const no = h("button", { class: "btn", type: "button", text: "نه", onclick: () => holder.replaceChildren(ask) });
-          holder.replaceChildren(h("span", { class: "small", text: "عنوان قبلی برگردد؟" }), yes, no);
+          holder.replaceChildren(h("span", { class: "small", text: wordsFor(action).back }), yes, no);
         },
       });
       holder.append(ask);
@@ -241,7 +268,7 @@ export function actionCard(action, { site, refresh, drafts, focused = false }) {
 
   return h("article", { class: "approval-item", id: `action-${action.action_id}`, "data-focused": focused ? "true" : null },
     h("div", { class: "approval-header" },
-      h("span", { text: action.normalized_query }),
+      h("span", { text: action.field === "description" ? `توضیحات متا${action.normalized_query ? ` · ${action.normalized_query}` : ""}` : action.normalized_query }),
       h("span", { class: `badge ${label.tone ? `badge-${label.tone}` : ""}`, text: label.text }),
     ),
     page,
@@ -257,9 +284,10 @@ function awaitingApproval(action, { manual, act, refreshSoon, drafts }) {
   // that must never turn the title someone chose back into the proposed one.
   const draft = drafts.get(action.action_id) || { choice: action.proposed_title, custom: "" };
   drafts.set(action.action_id, draft);
+  const words = wordsFor(action);
 
   const custom = h("input", {
-    class: "input", type: "text", maxLength: 300, placeholder: "عنوان خودتان را بنویسید", "aria-label": "عنوان دلخواه",
+    class: "input", type: "text", maxLength: words.max, placeholder: words.own, "aria-label": words.ownLabel,
     value: draft.custom,
     oninput: () => {
       customRadio.checked = true;
@@ -268,7 +296,7 @@ function awaitingApproval(action, { manual, act, refreshSoon, drafts }) {
     },
   });
   const customRadio = h("input", {
-    type: "radio", name: group, value: "__custom", "aria-label": "عنوان دلخواه", checked: draft.choice === "__custom",
+    type: "radio", name: group, value: "__custom", "aria-label": words.ownLabel, checked: draft.choice === "__custom",
     onchange: () => { draft.choice = "__custom"; },
   });
   const option = (value, text) => h("label", { class: "option" },
@@ -282,7 +310,7 @@ function awaitingApproval(action, { manual, act, refreshSoon, drafts }) {
   );
 
   const approve = h("button", {
-    class: "btn btn-primary", type: "button", text: manual ? "تأیید این عنوان" : "تأیید و اعمال روی سایت",
+    class: "btn btn-primary", type: "button", text: manual ? words.approve : "تأیید و اعمال روی سایت",
     onclick: () => {
       const title = draft.choice === "__custom" ? draft.custom.trim() : draft.choice;
       if (!title) { custom.focus(); return; }
@@ -295,8 +323,8 @@ function awaitingApproval(action, { manual, act, refreshSoon, drafts }) {
   });
 
   return h("div", { class: "approval-desc" },
-    h("div", { class: "title-compare" }, titleRow("عنوان فعلی", action.current_title)),
-    h("div", { class: "label", text: action.alternative_titles.length ? "یکی را انتخاب کنید:" : "عنوان پیشنهادی:" }),
+    h("div", { class: "title-compare" }, titleRow(words.current, action.current_title)),
+    h("div", { class: "label", text: action.alternative_titles.length ? "یکی را انتخاب کنید:" : `${words.proposed}:` }),
     options,
     h("div", { class: "approval-actions", style: "margin-top:.6rem" }, approve, reject),
   );

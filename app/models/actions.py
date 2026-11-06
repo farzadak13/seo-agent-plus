@@ -8,6 +8,7 @@ from app.models.strategies import StrategyType
 
 class ActionType(StrEnum):
     OPTIMIZE_TITLE = "optimize_title"
+    OPTIMIZE_META_DESCRIPTION = "optimize_meta_description"
     INVESTIGATE_CANNIBALIZATION = (
         "investigate_cannibalization"
     )

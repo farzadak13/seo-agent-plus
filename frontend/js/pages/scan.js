@@ -108,7 +108,26 @@ function issueGroups(issues) {
   return [...groups.entries()];
 }
 
-function issueList(issues) {
+// Problems a written description fixes: each such page gets a button that asks for one.
+const DESCRIPTION_CODES = new Set(["missing_description", "description_too_long", "duplicate_meta_description"]);
+
+function askButton(url, askDescription) {
+  const holder = h("span", {});
+  const button = h("button", {
+    class: "btn-link", type: "button", text: "پیشنهاد توضیحات متا",
+    onclick: async () => {
+      button.disabled = true;
+      const problem = await askDescription(url);
+      holder.replaceChildren(problem
+        ? h("span", { class: "small", text: problem })
+        : h("a", { class: "small", href: "#/inbox", text: "پیشنهاد تا یکی دو دقیقهٔ دیگر در صندوق تأیید آماده می‌شود" }));
+    },
+  });
+  holder.append(button);
+  return holder;
+}
+
+function issueList(issues, { askDescription } = {}) {
   if (issues.length === 0) return h("div", { class: "empty", text: "مشکلی پیدا نشد." });
   return issueGroups(issues).map(([code, items]) => {
     const info = issueLabel(code);
@@ -123,7 +142,8 @@ function issueList(issues) {
         ? h("details", { class: "small" },
             h("summary", { class: "muted", text: "صفحه‌ها" }),
             h("ul", { class: "issue-urls" }, urls.slice(0, 50).map((url) => h("li", {},
-              h("a", { class: "page-url", href: url, target: "_blank", rel: "noopener noreferrer", title: url, text: readableUrl(url) })))))
+              h("a", { class: "page-url", href: url, target: "_blank", rel: "noopener noreferrer", title: url, text: readableUrl(url) }),
+              askDescription && DESCRIPTION_CODES.has(code) ? [" ", askButton(url, askDescription)] : null))))
         : null,
     );
   });
@@ -185,6 +205,16 @@ export async function scanPage(container, { site, alive }) {
   };
 
   let generation = 0;
+
+  // A description for one page, written by the model and waiting in the inbox. Null when asked.
+  const askDescription = async (url) => {
+    try {
+      await api(`${base}/meta-descriptions`, { method: "POST", body: { url } });
+      return null;
+    } catch (error) {
+      return messageFor(error);
+    }
+  };
 
   function watch() {
     watching = 0;
@@ -281,7 +311,7 @@ export async function scanPage(container, { site, alive }) {
     if (filesPanel) area.append(filesPanel);
     area.append(h("section", { class: "card-panel" },
       h("div", { class: "panel-title", text: "چیزهایی که پیدا شد" }),
-      issueList(scan.issues),
+      issueList(scan.issues, { askDescription }),
     ));
     if (targetsFor !== scan.completed_at) {
       targetsFor = scan.completed_at;

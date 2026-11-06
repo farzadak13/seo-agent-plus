@@ -515,3 +515,25 @@ def test_the_measurement_settings_come_from_the_environment(monkeypatch):
 
     with pytest.raises(ValidationError):
         RuntimeConfig(api_key="k", database_dsn="unused", measurement_window_days=3)
+
+
+def test_a_description_is_measured_on_the_whole_page_not_one_query():
+    from app.models.actions import ActionType
+
+    class PageOnly(FakeWarehouse):
+        def query_days(self, **kwargs):
+            raise AssertionError("a description is not about one query")
+
+        def page_totals(self, *, site_id, url, start, end):
+            return {day: row for day, row in self.rows.items() if start <= day <= end and day in self.stored}
+
+    w = world(PageOnly(daily(before=5, after=7)))
+    managed = w.actions.get(ACTION_ID)
+    action = managed.action.model_copy(update={
+        "action_type": ActionType.OPTIMIZE_META_DESCRIPTION,
+        "parameters": {**managed.action.parameters, "field": "description"},
+    })
+    w.actions.update(managed.model_copy(update={"action": action}))
+
+    assert w.runner.run_round().settled == 1
+    assert w.actions.get(ACTION_ID).status == ActionStatus.SUCCEEDED

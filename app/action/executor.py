@@ -24,6 +24,7 @@ from collections.abc import Callable
 from typing import Any
 
 from app.action.approval import SYSTEM_ACTOR, check_rollback
+from app.action.fields import field_of
 from app.action.store import ManagedActionStore
 from app.execution.capabilities import required_capabilities_for_action
 from app.models.action_lifecycle import transition_action
@@ -84,7 +85,8 @@ def build_execute_action_handler(
 
 def _carry_out(managed: ManagedAction, adapter, action_store: ManagedActionStore) -> ManagedAction:
     action = managed.action
-    target = action.parameters["recommended_title"]
+    field = field_of(action)
+    target = field.recommended(action)
 
     missing = set(required_capabilities_for_action(action.action_type)) - set(adapter.capabilities)
     if missing:
@@ -94,12 +96,12 @@ def _carry_out(managed: ManagedAction, adapter, action_store: ManagedActionStore
                 ActionStatus.FAILED,
                 "adapter_cannot_apply",
                 detail={"missing": sorted(item.value for item in missing)},
-                error="This site connection cannot change titles.",
+                error=f"This site connection cannot change the page's {field.label}.",
             )
         )
 
     page = _read(adapter, managed)
-    current = _norm(page.title)
+    current = _norm(field.on_page(page))
     already_there = current == _norm(target)
     if (
         not already_there
@@ -111,8 +113,8 @@ def _carry_out(managed: ManagedAction, adapter, action_store: ManagedActionStore
                 managed,
                 ActionStatus.FAILED,
                 "page_changed_since_proposal",
-                detail={"expected_current": managed.observed_value, "found": page.title},
-                error="The page title changed after this proposal was made; nothing was written.",
+                detail={"expected_current": managed.observed_value, "found": field.on_page(page)},
+                error=f"The page's {field.label} changed after this proposal was made; nothing was written.",
             )
         )
 
@@ -120,10 +122,11 @@ def _carry_out(managed: ManagedAction, adapter, action_store: ManagedActionStore
     # someone made the same edit by hand). Writing again with the same key is
     # still done: it is a no-op for the site and it returns the original
     # change id, without which an exact rollback is impossible.
-    operation = adapter.update_title(
+    operation = field.write(
+        adapter,
         site_id=managed.site_id,
         normalized_url=action.normalized_url,
-        new_title=target,
+        value=target,
         idempotency_key=f"action:{managed.action_id}",
     )
     if not operation.success:
@@ -137,7 +140,7 @@ def _carry_out(managed: ManagedAction, adapter, action_store: ManagedActionStore
             )
         )
 
-    previous = (managed.observed_value or page.title) if already_there else page.title
+    previous = (managed.observed_value or field.on_page(page)) if already_there else field.on_page(page)
     managed = action_store.update(
         _move(
             managed,
@@ -163,15 +166,16 @@ def _check_applied_by_customer(managed: ManagedAction, adapter, action_store: Ma
     with the title to apply in its history for the dashboard to show. Each
     "I've applied it" from the customer runs this again.
     """
-    target = managed.action.parameters["recommended_title"]
+    field = field_of(managed.action)
+    target = field.recommended(managed.action)
     page = _read(adapter, managed)
-    if _norm(page.title) != _norm(target):
+    if _norm(field.on_page(page)) != _norm(target):
         return action_store.update(
             managed.record(
                 action=managed.action,
                 actor=SYSTEM_ACTOR,
                 reason="waiting_for_customer_to_apply",
-                detail={"apply_title": target, "found": page.title},
+                detail={f"apply_{field.name}": target, "found": field.on_page(page)},
                 error=None,
             )
         )
@@ -197,26 +201,29 @@ def _check_applied_by_customer(managed: ManagedAction, adapter, action_store: Ma
 def _rollback_by_customer(managed: ManagedAction, adapter, actor: str, action_store: ManagedActionStore) -> ManagedAction:
     """A manual site: the customer restores the old title; this sees whether they have."""
     applied = managed.applied
-    if not applied.previous_value.strip():
-        # The page's title before the change was never known, so there is
+    field = field_of(managed.action)
+    # A page with no description is a value the scan saw; a title is never
+    # empty, so an empty one means it was not known.
+    if not applied.previous_value.strip() and field.name == "title":
+        # The page's value before the change was never known, so there is
         # nothing to ask the customer to restore or to recognise afterwards.
         return action_store.update(
             managed.record(
                 action=managed.action,
                 actor=actor,
                 reason="rollback_refused",
-                error="The title before this change is not known; restore it by hand on your site.",
+                error=f"The {field.label} before this change is not known; restore it by hand on your site.",
             )
         )
     page = _read(adapter, managed)
-    if _norm(page.title) == _norm(applied.previous_value):
+    if _norm(field.on_page(page)) == _norm(applied.previous_value):
         return action_store.update(_rolled_back(managed, adapter, actor, "restored_by_customer"))
     return action_store.update(
         managed.record(
             action=managed.action,
             actor=actor,
             reason="waiting_for_customer_to_restore",
-            detail={"restore_title": applied.previous_value, "found": page.title},
+            detail={f"restore_{field.name}": applied.previous_value, "found": field.on_page(page)},
             error=None,
         )
     )
@@ -283,9 +290,9 @@ def _rollback_exactly(managed, adapter, actor, action_store) -> ManagedAction:
             "rolled_back",
             change_id=operation.change_id,
             detail={
-                "rendered_title": page.title,
+                f"rendered_{field_of(managed.action).name}": field_of(managed.action).on_page(page),
                 # False while a page cache still serves the old HTML.
-                "rendered_matches": _norm(page.title) == _norm(applied.previous_value),
+                "rendered_matches": _norm(field_of(managed.action).on_page(page)) == _norm(applied.previous_value),
             },
         )
     )
@@ -294,8 +301,9 @@ def _rollback_exactly(managed, adapter, actor, action_store) -> ManagedAction:
 def _rollback_by_rewriting(managed, adapter, actor, action_store) -> ManagedAction:
     """Write the previous title back, for sites that keep no change history."""
     applied = managed.applied
+    field = field_of(managed.action)
     page = _read(adapter, managed)
-    current = _norm(page.title)
+    current = _norm(field.on_page(page))
 
     if current == _norm(applied.previous_value):
         return action_store.update(_rolled_back(managed, adapter, actor, "already_rolled_back"))
@@ -307,14 +315,15 @@ def _rollback_by_rewriting(managed, adapter, actor, action_store) -> ManagedActi
                 action=managed.action,
                 actor=actor,
                 reason="rollback_refused_page_changed",
-                detail={"expected_current": applied.new_value, "found": page.title},
-                error="The page title was changed after this action; rollback did not overwrite it.",
+                detail={"expected_current": applied.new_value, "found": field.on_page(page)},
+                error=f"The page's {field.label} was changed after this action; rollback did not overwrite it.",
             )
         )
-    operation = adapter.update_title(
+    operation = field.write(
+        adapter,
         site_id=managed.site_id,
         normalized_url=managed.action.normalized_url,
-        new_title=applied.previous_value,
+        value=applied.previous_value,
         idempotency_key=f"rollback:{managed.action_id}",
     )
     if not operation.success:
@@ -327,14 +336,14 @@ def _rollback_by_rewriting(managed, adapter, actor, action_store) -> ManagedActi
             )
         )
     restored = _read(adapter, managed)
-    if _norm(restored.title) != _norm(applied.previous_value):
+    if _norm(field.on_page(restored)) != _norm(applied.previous_value):
         return action_store.update(
             managed.record(
                 action=managed.action,
                 actor=actor,
                 reason="rollback_not_verified",
-                detail={"expected": applied.previous_value, "found": restored.title},
-                error="The previous title was written but the page does not show it.",
+                detail={"expected": applied.previous_value, "found": field.on_page(restored)},
+                error=f"The previous {field.label} was written but the page does not show it.",
             )
         )
     return action_store.update(
@@ -398,20 +407,24 @@ def _verify(managed: ManagedAction, adapter) -> ManagedAction:
     """
     managed = _move(managed, ActionStatus.WAITING_FOR_RECRAWL, "waiting_for_recrawl")
     page = _read(adapter, managed)
-    target = managed.action.parameters["expected_title"]
-    stored = page.metadata.get("override_title") if page.metadata else None
-    rendered_ok = _norm(page.title) == _norm(target)
+    field = field_of(managed.action)
+    target = field.expected(managed.action)
+    stored = page.metadata.get(field.stored_key) if page.metadata else None
+    rendered_ok = _norm(field.on_page(page)) == _norm(target)
     stored_ok = stored is not None and _norm(stored) == _norm(target)
-    observed = target if (rendered_ok or stored_ok) else page.title
+    observed = target if (rendered_ok or stored_ok) else field.on_page(page)
     verification = verify_action_state(
         action=managed.action,
         verification_id=f"verification:{managed.action_id}",
-        observed_state={"title": observed},
+        observed_state={field.name: observed},
     )
     verified = apply_verification(action=managed.action, verification=verification)
     # Set or cleared: an earlier attempt may have left its error here.
-    error = "The title was written but the page does not show it." if verified.status == ActionStatus.FAILED else None
-    detail = {"rendered_title": page.title}
+    error = (
+        f"The {field.label} was written but the page does not show it."
+        if verified.status == ActionStatus.FAILED else None
+    )
+    detail = {f"rendered_{field.name}": field.on_page(page)}
     if stored_ok and not rendered_ok:
         detail["note"] = "stored on the site; the public page is still cached"
     return managed.record(

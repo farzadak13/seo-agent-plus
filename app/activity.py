@@ -14,12 +14,14 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.action.fields import field_of
 from app.models.managed_action import ManagedAction
 from app.warehouse.planner import FAILURE_MESSAGE
 
 # Detail keys worth showing; the rest is for the action's own page.
 _ACTION_DETAIL = (
     "apply_title", "restore_title", "found", "rendered_title", "note", "edited_title",
+    "apply_description", "restore_description", "rendered_description", "edited_description",
     "chosen_alternative", "outcome_status", "relative_change", "primary_metric",
     "baseline", "current", "data_complete",
 )
@@ -42,7 +44,9 @@ def build_activity(
 ) -> list[ActivityItem]:
     items: list[ActivityItem] = []
     for managed in actions:
-        title = managed.action.parameters.get("recommended_title")
+        field = field_of(managed.action)
+        # The new text of whichever field the change is about.
+        title = managed.action.parameters.get(f"recommended_{field.name}")
         for event in managed.history:
             items.append(
                 ActivityItem(
