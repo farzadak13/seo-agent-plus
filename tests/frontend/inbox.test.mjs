@@ -218,3 +218,92 @@ test("an undo with a job on it says it is running", async () => {
   const { container } = await open(WORDPRESS);
   assert.ok(container.textContent.includes("در حال برگرداندن تغییر…"));
 });
+
+const ticks = (root) => findAll(root, (element) => element.classList.contains("bulk-tick"));
+
+test("several proposals are approved together, each with the text chosen on its card", async () => {
+  server.actions = [proposal("a"), proposal("b"), proposal("c")];
+  const page = await open();
+  choose(page.card("b"), "other b");
+  const [all] = findAll(page.container, (element) => element.attributes["aria-label"] === "انتخاب همهٔ پیشنهادها");
+  all.checked = true;
+  all.dispatch("change");
+  const [, tickB, tickC] = ticks(page.container);
+  tickC.checked = false;
+  tickC.dispatch("change");
+
+  button(page.container, "تأیید و اعمال انتخاب‌شده‌ها (۲)").click();
+  await settle();
+  assert.deepEqual(server.posts, [
+    { path: "/v1/actions/a/approve", body: {} },
+    { path: "/v1/actions/b/approve", body: { title: "other b" } },
+  ]);
+  assert.equal(tickB.value, "b");
+  assert.ok(page.container.textContent.includes("۲ پیشنهاد تأیید شد."));
+});
+
+test("a group decision that partly fails says how many went through", async () => {
+  server.actions = [proposal("a"), proposal("b")];
+  const page = await open();
+  ticks(page.container).forEach((tick) => { tick.checked = true; tick.dispatch("change"); });
+  server.postFails = true;
+  button(page.container, "رد انتخاب‌شده‌ها").click();
+  await settle();
+  assert.ok(page.container.textContent.includes("هیچ‌کدام ثبت نشد"));
+});
+
+test("a single proposal gets no group controls", async () => {
+  server.actions = [proposal("a")];
+  const page = await open();
+  assert.equal(ticks(page.container).length, 0);
+});
+
+
+test("a card left on an empty text of its own is not approved with the original", async () => {
+  server.actions = [proposal("a"), proposal("b")];
+  const page = await open();
+  choose(page.card("a"), "__custom");
+  type(titleBox(page.card("b")), "  my own b  ");
+  ticks(page.container).forEach((tick) => { tick.checked = true; tick.dispatch("change"); });
+  button(page.container, "تأیید و اعمال انتخاب‌شده‌ها (۲)").click();
+  await settle();
+  assert.deepEqual(server.posts, [{ path: "/v1/actions/b/approve", body: { title: "my own b" } }]);
+  assert.ok(page.container.textContent.includes("متن دلخواه یکی از پیشنهادها خالی است"));
+});
+
+test("on a site applied by hand the button does not promise to apply", async () => {
+  server.actions = [proposal("a"), proposal("b")];
+  const page = await open(MANUAL);
+  ticks(page.container).forEach((tick) => { tick.checked = true; tick.dispatch("change"); });
+  assert.ok(button(page.container, "تأیید انتخاب‌شده‌ها (۲)"));
+});
+
+test("an ended plan stops a group decision at the first refusal", async () => {
+  server.actions = [proposal("a"), proposal("b"), proposal("c")];
+  const page = await open();
+  ticks(page.container).forEach((tick) => { tick.checked = true; tick.dispatch("change"); });
+  const sent = [];
+  const saved = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (init.method === "POST") {
+      sent.push(url.pathname);
+      return answer(402, { detail: "Your subscription has ended. Renew it to start new work." });
+    }
+    return saved(url, init);
+  };
+  button(page.container, "تأیید و اعمال انتخاب‌شده‌ها (۳)").click();
+  await settle();
+  assert.equal(sent.length, 1);
+  assert.ok(page.container.textContent.includes("اشتراک شما تمام شده است"));
+});
+
+test("ticking some shows «همه» half-ticked and counts them", async () => {
+  server.actions = [proposal("a"), proposal("b"), proposal("c")];
+  const page = await open();
+  const [first] = ticks(page.container);
+  first.checked = true;
+  first.dispatch("change");
+  const [all] = findAll(page.container, (element) => element.attributes["aria-label"] === "انتخاب همهٔ پیشنهادها");
+  assert.equal(all.indeterminate, true);
+  assert.ok(button(page.container, "تأیید و اعمال انتخاب‌شده‌ها (۱)"));
+});
