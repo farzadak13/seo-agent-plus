@@ -62,6 +62,13 @@ def build_site_scan_handler(
             return {"site_id": site_id, "skipped": True}
         running = scan_store.save(scan.model_copy(update={"status": ScanStatus.RUNNING, "error": None}))
         base_url = str(site.base_url)
+
+        def replaced() -> bool:
+            # Another scan was queued while this one read the site: it is the
+            # one the customer waits on, and this one's result must not land on it.
+            latest = scan_store.find(site_id)
+            return latest is None or latest.job_id != running.job_id
+
         try:
             result = crawler_factory().crawl(base_url)
             issues = build_issues(result)
@@ -72,8 +79,12 @@ def build_site_scan_handler(
                 result.home_status != 200 and running.trigger == ScanTrigger.MONTHLY
                 and scan_store.completed(site_id) is not None
             ):
+                if replaced():
+                    return {"site_id": site_id, "skipped": True}
                 scan_store.save(running.model_copy(update={"status": ScanStatus.FAILED, "error": "site_unreachable"}))
                 return {"site_id": site_id, "status": "site_unreachable"}
+            if replaced():
+                return {"site_id": site_id, "skipped": True}
             completed = scan_store.save(
                 running.model_copy(
                     update={
@@ -96,6 +107,10 @@ def build_site_scan_handler(
                 )
             )
         except Exception as exc:
+            if replaced():
+                # Its job is done either way; what went wrong is still worth knowing.
+                log.warning("scan %s was replaced; it had failed with %s", running.job_id, type(exc).__name__, exc_info=True)
+                return {"site_id": site_id, "skipped": True}
             scan_store.save(running.model_copy(update={"status": ScanStatus.FAILED, "error": type(exc).__name__}))
             raise
         _refresh_proposals(file_store, site, base_url, result, issues)

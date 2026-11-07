@@ -80,7 +80,7 @@ def register_scan_routes(app: FastAPI, dependencies, *, principal_id: Callable, 
 
     @app.get("/v1/sites/{site_id}/scans/latest", response_model=SiteScan)
     def latest_scan(site_id: str, authenticated_principal_id: str = Depends(principal_id)) -> SiteScan:
-        owned_site(site_id, authenticated_principal_id)
+        site = owned_site(site_id, authenticated_principal_id)
         scan = scans().find(site_id)
         done = scans().completed(site_id)
         # A scan the customer did not ask for is not theirs to wait on: until it
@@ -90,7 +90,13 @@ def register_scan_routes(app: FastAPI, dependencies, *, principal_id: Callable, 
             scan = done.model_copy(update={"last_attempt_error": scan.error if scan.status == ScanStatus.FAILED else None})
         if scan is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This site has not been scanned yet.")
-        return scan
+        billing = dependencies.billing
+        # As app.scan.monthly.MonthlyRescan asks it.
+        try:
+            rescanned = billing is None or billing.entitlement(site.principal_id).active
+        except Exception:  # one line of the page is not worth the page
+            rescanned = None
+        return scan.model_copy(update={"monthly_rescan": rescanned})
 
     @app.get("/v1/sites/{site_id}/site-files", response_model=list[SiteFileChange])
     def site_files(site_id: str, authenticated_principal_id: str = Depends(principal_id)) -> list[SiteFileChange]:

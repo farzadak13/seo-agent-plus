@@ -99,6 +99,12 @@ function filePanel(change, { base, act, problem }) {
   );
 }
 
+// The parts that apply, as one small line; nothing when none does.
+function lineOrNothing(parts) {
+  const text = parts.filter(Boolean).join(" ");
+  return text ? h("p", { class: "small muted", text }) : null;
+}
+
 // A month after the last one (app.scan.monthly.RESCAN_EVERY).
 function nextScan(scan) {
   const next = new Date(scan.completed_at || scan.requested_at);
@@ -327,7 +333,13 @@ export async function scanPage(container, { site, alive }) {
               ? "بررسی خودکار ماهانه نتوانست سایت را باز کند. اگر سایت در دسترس است، خودتان «بررسی دوباره» را بزنید؛ وگرنه چند روز بعد دوباره امتحان می‌کنیم."
               : "بررسی خودکار ماهانه کامل نشد. نتیجهٔ زیر از بررسی قبلی است؛ چند روز بعد دوباره امتحان می‌کنیم." })
           : null,
-        h("p", { class: "small muted", text: `${scan.trigger === "monthly" ? "این بررسی خودکار ماهانه بود. " : ""}${nextScan(scan) > new Date() ? `بررسی خودکار بعدی حدود ${fmt.localDay(nextScan(scan))} است.` : "بررسی خودکار بعدی به‌زودی انجام می‌شود."}` }),
+        lineOrNothing([
+          scan.trigger === "monthly" ? "این بررسی خودکار ماهانه بود." : "",
+          // No promise while the subscription has lapsed: no automatic scan comes then.
+          scan.monthly_rescan === false ? ""
+            : nextScan(scan) > new Date() ? `بررسی خودکار بعدی حدود ${fmt.localDay(nextScan(scan))} است.`
+            : "بررسی خودکار بعدی به‌زودی انجام می‌شود.",
+        ]),
       ),
     );
     if (filesPanel) area.append(filesPanel);

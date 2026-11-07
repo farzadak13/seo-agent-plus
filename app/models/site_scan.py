@@ -117,6 +117,9 @@ class SiteScan(BaseModel):
     monthly_failures: int = Field(default=0, ge=0)
     # Only in answers: why the newest monthly try failed, shown beside the last finished scan.
     last_attempt_error: str | None = None
+    # Only in answers: whether this site is scanned again on its own (not while
+    # the subscription has lapsed), so the page promises no scan that won't come.
+    monthly_rescan: bool | None = None
     # What the scan before found ("code|url"), and how much of this one is not in it.
     # None: there was no finished scan before, so nothing is "new".
     previous_issues: list[str] | None = None

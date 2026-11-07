@@ -61,7 +61,8 @@ class SiteScanStore(_Latest):
         return latest if latest is not None and latest.status == ScanStatus.COMPLETED else None
 
     def save(self, scan: SiteScan) -> SiteScan:
-        payload = scan.model_dump(mode="json")
+        # The fields only answers carry are never kept.
+        payload = scan.model_dump(mode="json", exclude={"last_attempt_error", "monthly_rescan"})
         completed_store = _Latest(self._repository, COMPLETED_SCAN_AGGREGATE_TYPE)
         # A site scanned before there was a record of the last finished scan:
         # the finished scan about to be written over is kept first.

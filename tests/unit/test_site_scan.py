@@ -1690,3 +1690,87 @@ def test_a_site_that_stays_down_is_tried_less_often_and_the_customer_is_told():
         world.now += timedelta(days=wait_days) - timedelta(minutes=1)
         assert monthly(world).run_round()["queued"] == 0
         world.now += timedelta(minutes=2)
+
+
+@pytest.mark.parametrize("then", ["answers", "is_down", "breaks"])
+def test_a_monthly_scan_replaced_while_it_reads_the_site_leaves_the_new_one_alone(then):
+    from app.scan.monthly import STALE_AFTER
+
+    class PressedMidway(FakeSite):
+        """A monthly scan read so long it went stale; the customer presses the button."""
+
+        pressed = False
+
+        def __call__(self, url, limit):
+            latest = world.scans.find("site-1")
+            if not self.pressed and latest.trigger == "monthly" and latest.status == ScanStatus.RUNNING:
+                self.pressed = True
+                world.now += STALE_AFTER + timedelta(minutes=1)
+                assert world.client.post("/v1/sites/site-1/scans").status_code == 202
+                if then == "is_down":
+                    return Fetched(status=None)
+                if then == "breaks":
+                    raise RuntimeError("the crawler broke")
+            return super().__call__(url, limit)
+
+    world = World(PressedMidway(new_site().pages))
+    world.scan()
+    world.now += timedelta(days=31)
+    monthly(world).run_round()
+    world.run_jobs()
+    latest = world.scans.find("site-1")
+    assert latest.trigger == "customer" and latest.status == ScanStatus.COMPLETED, (latest.trigger, latest.status, latest.error)
+
+
+def test_a_monthly_scan_reading_the_site_still_holds_the_button_and_a_queued_one_gives_way():
+    world = World(new_site())
+    world.scan()
+    world.now += timedelta(days=31)
+    monthly(world).run_round()
+    attempt = world.scans.find("site-1")
+    world.scans.save(attempt.model_copy(update={"status": ScanStatus.RUNNING}))
+    assert world.client.post("/v1/sites/site-1/scans").status_code == 409
+    world.scans.save(attempt)  # queued again: it gives way
+    assert world.client.get("/v1/sites/site-1/scans/latest").json()["last_attempt_error"] is None
+    assert world.client.post("/v1/sites/site-1/scans").status_code == 202
+
+
+def test_monthly_scans_do_not_count_against_the_days_limit():
+    world = World(new_site())
+    # A tenant with many sites, each scanned by the monthly round within the hour.
+    for i in range(SCANS_PER_TENANT_PER_DAY):
+        world.sites.create(Site(site_id=f"site-x{i}", principal_id="principal-1", name="n", base_url=f"https://x{i}.example/"))
+        world.scans.save(SiteScan(
+            site_id=f"site-x{i}", tenant_id="principal-1", job_id=f"job-x{i}", host=f"x{i}.example",
+            requested_at=world.now - timedelta(hours=1), status=ScanStatus.COMPLETED, trigger="monthly",
+        ))
+    assert world.client.post("/v1/sites/site-1/scans").status_code == 202
+
+
+def test_monthly_retries_wait_at_most_eight_days():
+    from app.scan.monthly import MonthlyRescan
+
+    world = World(new_site())
+    world.scan()
+    world.now += timedelta(days=31)
+    monthly(world).run_round()
+    attempt = world.scans.find("site-1")
+    world.scans.save(attempt.model_copy(update={"status": ScanStatus.FAILED, "error": "site_unreachable", "monthly_failures": 6}))
+    rescan = monthly(world)
+    site = world.sites.get("site-1")
+    assert rescan.due(site, attempt.requested_at + timedelta(days=8) - timedelta(minutes=1)) is None
+    assert rescan.due(site, attempt.requested_at + timedelta(days=8)) is not None
+
+
+def test_a_lapsed_subscription_is_not_promised_a_monthly_scan():
+    world = World(new_site())
+    world.scan()
+    assert world.client.get("/v1/sites/site-1/scans/latest").json()["monthly_rescan"] is True
+
+    class Lapsed:
+        def entitlement(self, tenant_id):
+            from types import SimpleNamespace
+            return SimpleNamespace(active=False)
+
+    world.client.app.state.dependencies.billing = Lapsed()
+    assert world.client.get("/v1/sites/site-1/scans/latest").json()["monthly_rescan"] is False

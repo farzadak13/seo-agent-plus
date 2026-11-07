@@ -231,10 +231,38 @@ test("an old scan without speed shows no response time", async (t) => {
   assert.ok(!container.textContent.includes("زمان پاسخ معمول"));
 });
 
+const daysAgo = (days) => new Date(Date.now() - days * 86400000).toISOString();
+
 test("a monthly scan says so, what is new since the last one, and when the next comes", async (t) => {
-  server.scan = scan({ trigger: "monthly", new_issue_count: 2, completed_at: "2026-11-01T10:00:00Z" });
+  server.scan = scan({ trigger: "monthly", new_issue_count: 2, completed_at: daysAgo(3) });
   const container = await open(t);
   assert.ok(container.textContent.includes("مشکل‌های تازه"));
   assert.ok(container.textContent.includes("این بررسی خودکار ماهانه بود."));
-  assert.ok(container.textContent.includes("بررسی خودکار بعدی"));
+  assert.ok(container.textContent.includes("بررسی خودکار بعدی حدود"));
+  assert.ok(!container.textContent.includes("به‌زودی"));
+});
+
+test("a scan a month old says the next one comes soon", async (t) => {
+  server.scan = scan({ completed_at: daysAgo(31) });
+  const container = await open(t);
+  assert.ok(container.textContent.includes("بررسی خودکار بعدی به‌زودی انجام می‌شود."));
+});
+
+test("a lapsed subscription is promised no automatic scan", async (t) => {
+  server.scan = scan({ trigger: "monthly", completed_at: daysAgo(3), monthly_rescan: false });
+  const container = await open(t);
+  assert.ok(container.textContent.includes("این بررسی خودکار ماهانه بود."));
+  assert.ok(!container.textContent.includes("بررسی خودکار بعدی"));
+});
+
+test("a monthly scan that could not open the site says so beside the last one", async (t) => {
+  server.scan = scan({ completed_at: daysAgo(32), last_attempt_error: "site_unreachable" });
+  const container = await open(t);
+  assert.ok(container.textContent.includes("بررسی خودکار ماهانه نتوانست سایت را باز کند."));
+});
+
+test("a monthly scan that failed otherwise says the result is the one before", async (t) => {
+  server.scan = scan({ completed_at: daysAgo(32), last_attempt_error: "TimeoutError" });
+  const container = await open(t);
+  assert.ok(container.textContent.includes("بررسی خودکار ماهانه کامل نشد."));
 });
