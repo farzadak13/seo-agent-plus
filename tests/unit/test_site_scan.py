@@ -15,7 +15,7 @@ from app.scan import crawler
 from app.scan.files import plan_site_files
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.models.site_files import SiteFileChange, SiteFileKind, SiteFileStatus
-from app.models.site_scan import ScannedPage, ScanStatus
+from app.models.site_scan import ScannedPage, ScanStatus, SiteScan
 from app.models.sites import Site, SiteAdapterConnection
 from app.onboarding.site_store import SiteStore
 from app.persistence.memory import InMemoryRepository
@@ -1537,3 +1537,156 @@ def test_heavy_html_and_the_time_taken_are_recorded():
     assert page.speed.fetch_ms == 3250
     assert page.speed.html_kb >= 500
     assert "heavy_html" in {issue.code for issue in speed_issues(page)}
+
+
+# ---- the monthly scan ----------------------------------------------------------------
+
+
+def monthly(world, **options):
+    from app.scan.monthly import MonthlyRescan
+
+    import uuid
+
+    return MonthlyRescan(
+        site_store=world.sites, scan_store=world.scans, job_store=world.jobs,
+        job_id_factory=lambda: f"job-monthly-{uuid.uuid4().hex[:8]}", clock=lambda: world.now, **options,
+    )
+
+
+def test_a_site_is_scanned_again_a_month_after_its_last_scan_and_says_what_is_new():
+    site = FakeSite({"/": html(links=["/a"]), "/a": html("صفحهٔ الف با عنوانی کاملاً کافی")})
+    world = World(site)
+    first = world.scan()
+    assert first["new_issue_count"] is None, "the first scan has nothing to compare with"
+
+    world.now += timedelta(days=10)
+    assert monthly(world).run_round() == {"queued": 0, "due": 0}
+
+    world.now += timedelta(days=21)
+    site.pages["/b"] = html("")  # a page without a title appears
+    site.pages["/"] = html(links=["/a", "/b"])
+    assert monthly(world).run_round()["queued"] == 1
+    world.run_jobs()
+    again = world.client.get("/v1/sites/site-1/scans/latest").json()
+    assert again["trigger"] == "monthly" and again["status"] == "completed"
+    assert again["new_issue_count"] >= 1
+
+
+def test_what_is_new_counts_what_the_summary_counts():
+    from app.models.site_scan import IssueSeverity, ScanIssue
+    from app.scan.handler import issue_keys_of
+
+    issues = [
+        ScanIssue(code="no_sitemap", severity=IssueSeverity.WARNING),
+        ScanIssue(code="not_in_sitemap", severity=IssueSeverity.INFO, url=f"{BASE}a"),
+    ]
+    assert issue_keys_of(issues) == ["no_sitemap|"], "information is not a problem that is new"
+    assert issue_keys_of([]) == []
+
+
+def test_a_monthly_scan_on_its_way_or_failed_leaves_the_last_one_in_use():
+    site = FakeSite({"/": html(links=["/a"]), "/a": html("صفحهٔ الف با عنوانی کاملاً کافی")})
+    world = World(site)
+    first = world.scan()
+    world.now += timedelta(days=31)
+    assert monthly(world).run_round()["queued"] == 1  # queued, not run yet
+
+    shown = world.client.get("/v1/sites/site-1/scans/latest").json()
+    assert shown["job_id"] == first["job_id"] and shown["status"] == "completed", "the customer is not made to wait"
+    assert world.scans.completed("site-1").job_id == first["job_id"]
+
+    site.pages["/"] = Fetched(status=None)  # the site is down when it runs
+    site.pages["/a"] = Fetched(status=None)
+    world.run_jobs()
+    assert world.client.get("/v1/sites/site-1/scans/latest").json()["job_id"] == first["job_id"]
+    assert monthly(world).run_round()["queued"] == 0, "a failed monthly scan waits a day"
+    world.now += timedelta(days=1, minutes=1)
+    assert monthly(world).run_round()["queued"] == 1
+
+
+def test_a_monthly_round_never_takes_a_customers_turn():
+    from app.models.sites import Site
+
+    world = World(new_site())
+    world.scan()
+    world.sites.create(Site(site_id="site-2", principal_id="principal-1", name="n", base_url="https://two.example/"))
+    world.scans.save(SiteScan(
+        site_id="site-2", tenant_id="principal-1", job_id="old-2", status=ScanStatus.COMPLETED,
+        requested_at=world.now, completed_at=world.now,
+    ))
+    world.now += timedelta(days=31)
+    assert monthly(world).run_round()["queued"] == 1, "one per tenant a round"
+    assert monthly(world).run_round()["queued"] == 0, "not beside the tenant's scan on its way"
+
+
+def test_no_monthly_scan_for_a_site_never_scanned_removed_or_lapsed():
+    from app.models.sites import SiteStatus
+
+    world = World(new_site())
+    assert monthly(world).run_round() == {"queued": 0, "due": 0}, "the customer starts the first one"
+    world.scan()
+    world.now += timedelta(days=31)
+    assert monthly(world, active=lambda tenant: False).run_round()["queued"] == 0
+    site = world.sites.get("site-1")
+    world.sites.update(site.model_copy(update={"status": SiteStatus.REMOVED}))
+    assert monthly(world).run_round()["queued"] == 0
+
+
+def test_a_round_queues_a_few_the_longest_waiting_first():
+    from app.models.sites import Site
+
+    world = World(new_site())
+    for n in range(2, 10):
+        world.sites.create(Site(site_id=f"site-{n}", principal_id=f"tenant-{n}", name="n", base_url=f"https://s{n}.example/"))
+        world.scans.save(SiteScan(
+            site_id=f"site-{n}", tenant_id=f"tenant-{n}", job_id=f"old-{n}", status=ScanStatus.COMPLETED,
+            requested_at=world.now - timedelta(days=40), completed_at=world.now - timedelta(days=40 - n),
+        ))
+    result = monthly(world, per_round=3).run_round()
+    assert result == {"queued": 3, "due": 8}
+    queued = [world.scans.find(f"site-{n}").trigger for n in range(2, 10)]
+    assert queued[:3] == ["monthly"] * 3 and set(queued[3:]) == {"customer"}
+
+
+def test_a_site_scanned_before_the_split_keeps_its_last_finished_scan():
+    from app.scan.store import COMPLETED_SCAN_AGGREGATE_TYPE
+
+    world = World(new_site())
+    first = world.scan()
+    # As a record from before: only the latest attempt was kept.
+    record = world.repository.get(aggregate_type=COMPLETED_SCAN_AGGREGATE_TYPE, aggregate_id="site-1")
+    world.repository._records.pop((COMPLETED_SCAN_AGGREGATE_TYPE, "site-1"))
+    assert record is not None and world.scans.completed("site-1").job_id == first["job_id"]
+
+    world.now += timedelta(days=31)
+    assert monthly(world).run_round()["queued"] == 1
+    assert world.scans.completed("site-1").job_id == first["job_id"], "kept when the new attempt was written"
+    assert world.client.get("/v1/sites/site-1/scans/latest").json()["job_id"] == first["job_id"]
+
+
+def test_the_customers_button_takes_the_place_of_a_monthly_scan():
+    world = World(new_site())
+    world.scan()
+    world.now += timedelta(days=31)
+    monthly(world).run_round()
+    response = world.client.post("/v1/sites/site-1/scans")
+    assert response.status_code == 202, response.text
+    world.run_jobs()
+    latest = world.client.get("/v1/sites/site-1/scans/latest").json()
+    assert latest["trigger"] == "customer" and latest["status"] == "completed"
+
+
+def test_a_site_that_stays_down_is_tried_less_often_and_the_customer_is_told():
+    site = FakeSite({"/": html(links=["/a"]), "/a": html("صفحهٔ الف با عنوانی کاملاً کافی")})
+    world = World(site)
+    world.scan()
+    site.pages["/"] = Fetched(status=None)
+    world.now += timedelta(days=31)
+    for wait_days in (1, 2, 4):
+        assert monthly(world).run_round()["queued"] == 1
+        world.run_jobs()
+        shown = world.client.get("/v1/sites/site-1/scans/latest").json()
+        assert shown["last_attempt_error"] == "site_unreachable" and shown["status"] == "completed"
+        world.now += timedelta(days=wait_days) - timedelta(minutes=1)
+        assert monthly(world).run_round()["queued"] == 0
+        world.now += timedelta(minutes=2)

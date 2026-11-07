@@ -65,6 +65,11 @@ class PageSpeedSignals(BaseModel):
     images_old_format: int = Field(default=0, ge=0)
 
 
+class ScanTrigger(StrEnum):
+    CUSTOMER = "customer"
+    MONTHLY = "monthly"
+
+
 class ScannedPage(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -107,4 +112,13 @@ class SiteScan(BaseModel):
     issues: list[ScanIssue] = Field(default_factory=list)
     # 0-100 (app.scan.score); None until the scan is done, or when the site did not answer.
     health_score: int | None = Field(default=None, ge=0, le=100)
+    trigger: ScanTrigger = ScanTrigger.CUSTOMER
+    # Monthly tries that failed in a row before this one, for waiting longer each time.
+    monthly_failures: int = Field(default=0, ge=0)
+    # Only in answers: why the newest monthly try failed, shown beside the last finished scan.
+    last_attempt_error: str | None = None
+    # What the scan before found ("code|url"), and how much of this one is not in it.
+    # None: there was no finished scan before, so nothing is "new".
+    previous_issues: list[str] | None = None
+    new_issue_count: int | None = None
     error: str | None = None

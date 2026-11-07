@@ -111,7 +111,7 @@ def build_target_suggestion_handler(
         # the job is not retried, and the button would stay off.
         try:
             site = site_store.get(site_id)
-            pages = scan_pages(scan_store.find(site_id))
+            pages = scan_pages(scan_store.completed(site_id))
             if _is_removed(site) or not pages:
                 fail(site_id, job_id, "no_pages")
                 return {"site_id": site_id, "skipped": True}

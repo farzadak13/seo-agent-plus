@@ -3,10 +3,13 @@ from __future__ import annotations
 
 from app.models.persistence import PersistenceRecord
 from app.models.site_files import SiteFileChange, SiteFileKind
-from app.models.site_scan import SiteScan
+from app.models.site_scan import ScanStatus, SiteScan
 from app.persistence.contracts import Repository
 
 SCAN_AGGREGATE_TYPE = "site_scan"
+# The last scan that finished: what pages, files, words and descriptions are built
+# from, untouched while a newer scan is queued, running, or has failed.
+COMPLETED_SCAN_AGGREGATE_TYPE = "site_scan_completed"
 FILE_AGGREGATE_TYPE = "site_file_change"
 SCHEMA_VERSION = 1
 
@@ -45,11 +48,34 @@ class SiteScanStore(_Latest):
         super().__init__(repository, SCAN_AGGREGATE_TYPE)
 
     def find(self, site_id: str) -> SiteScan | None:
+        """The latest attempt, whatever its state."""
         record = self._read(site_id)
         return SiteScan.model_validate(record.payload) if record else None
 
+    def completed(self, site_id: str) -> SiteScan | None:
+        """The last scan that finished; None when none has."""
+        record = self._repository.get(aggregate_type=COMPLETED_SCAN_AGGREGATE_TYPE, aggregate_id=site_id)
+        if record is not None:
+            return SiteScan.model_validate(record.payload)
+        latest = self.find(site_id)  # kept before there was a record of its own
+        return latest if latest is not None and latest.status == ScanStatus.COMPLETED else None
+
     def save(self, scan: SiteScan) -> SiteScan:
-        self._write(scan.site_id, scan.model_dump(mode="json"), tenant_id=scan.tenant_id, site_id=scan.site_id)
+        payload = scan.model_dump(mode="json")
+        completed_store = _Latest(self._repository, COMPLETED_SCAN_AGGREGATE_TYPE)
+        # A site scanned before there was a record of the last finished scan:
+        # the finished scan about to be written over is kept first.
+        if completed_store._read(scan.site_id) is None:
+            current = self.find(scan.site_id)
+            if current is not None and current.status == ScanStatus.COMPLETED and current.job_id != scan.job_id:
+                completed_store._write(
+                    scan.site_id, current.model_dump(mode="json"), tenant_id=current.tenant_id, site_id=current.site_id
+                )
+        self._write(scan.site_id, payload, tenant_id=scan.tenant_id, site_id=scan.site_id)
+        if scan.status == ScanStatus.COMPLETED:
+            completed_store._write(
+                scan.site_id, payload, tenant_id=scan.tenant_id, site_id=scan.site_id
+            )
         return scan
 
     def for_tenant(self, tenant_id: str) -> list[SiteScan]:

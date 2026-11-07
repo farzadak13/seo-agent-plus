@@ -59,7 +59,7 @@ def register_description_routes(app: FastAPI, dependencies, *, principal_id: Cal
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Update the HoshyarSEO plugin on your site to a version that can change meta descriptions.",
             )
-        scan = dependencies.scan_store.find(site_id)
+        scan = dependencies.scan_store.completed(site_id)
         page = scanned_page(scan if scan is not None and scan.status == ScanStatus.COMPLETED else None, request.url)
         if page is None:
             raise HTTPException(status_code=422, detail="That page is not one the scan read on this site.")

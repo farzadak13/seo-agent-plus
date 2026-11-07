@@ -230,3 +230,11 @@ test("an old scan without speed shows no response time", async (t) => {
   const container = await open(t);
   assert.ok(!container.textContent.includes("زمان پاسخ معمول"));
 });
+
+test("a monthly scan says so, what is new since the last one, and when the next comes", async (t) => {
+  server.scan = scan({ trigger: "monthly", new_issue_count: 2, completed_at: "2026-11-01T10:00:00Z" });
+  const container = await open(t);
+  assert.ok(container.textContent.includes("مشکل‌های تازه"));
+  assert.ok(container.textContent.includes("این بررسی خودکار ماهانه بود."));
+  assert.ok(container.textContent.includes("بررسی خودکار بعدی"));
+});

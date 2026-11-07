@@ -86,7 +86,7 @@ def register_target_routes(app: FastAPI, dependencies, *, principal_id: Callable
         return dependencies.target_store
 
     def latest_scan(site_id: str):
-        scan = dependencies.scan_store.find(site_id) if dependencies.scan_store is not None else None
+        scan = dependencies.scan_store.completed(site_id) if dependencies.scan_store is not None else None
         return scan if scan is not None and scan.status == ScanStatus.COMPLETED else None
 
     def pages_of(site_id: str):

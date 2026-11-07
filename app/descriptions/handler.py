@@ -111,7 +111,7 @@ def build_description_handler(
         if action_store.find(f"action:{job_id}") is not None:
             return {"job_id": job_id, "skipped": True}  # a retry after the proposal was saved
         site_id = str(payload["site_id"])
-        page = scanned_page(scan_store.find(site_id), str(payload["url"]))
+        page = scanned_page(scan_store.completed(site_id), str(payload["url"]))
         if page is None:
             return {"job_id": job_id, "status": "page_not_scanned"}
         keyword = keyword_for(site_id, page.url)

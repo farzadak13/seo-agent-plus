@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.models.site_files import SiteFileChange, SiteFileKind, SiteFileStatus
-from app.models.site_scan import ScanStatus
+from app.models.site_scan import ScanStatus, ScanTrigger
 from app.onboarding.site_store import SiteStore
 from app.scan.crawler import (
     MAX_ROBOTS_BYTES,
@@ -65,6 +65,15 @@ def build_site_scan_handler(
         try:
             result = crawler_factory().crawl(base_url)
             issues = build_issues(result)
+            # Nobody asked for a monthly scan: a site that did not answer this
+            # time is a failed try, not a month of "nothing found" over what the
+            # last scan read. The customer's own scan shows them what is so.
+            if (
+                result.home_status != 200 and running.trigger == ScanTrigger.MONTHLY
+                and scan_store.completed(site_id) is not None
+            ):
+                scan_store.save(running.model_copy(update={"status": ScanStatus.FAILED, "error": "site_unreachable"}))
+                return {"site_id": site_id, "status": "site_unreachable"}
             completed = scan_store.save(
                 running.model_copy(
                     update={
@@ -78,6 +87,11 @@ def build_site_scan_handler(
                         "pages_capped": result.pages_capped,
                         "issues": issues,
                         "health_score": health_score(issues, result.pages),
+                        # Only against a finished scan before it; the first one has nothing to compare.
+                        "new_issue_count": (
+                            len(set(issue_keys_of(issues)) - set(running.previous_issues))
+                            if running.previous_issues is not None else None
+                        ),
                     }
                 )
             )
@@ -88,6 +102,14 @@ def build_site_scan_handler(
         return {"site_id": site_id, "pages": len(completed.pages), "issues": len(issues)}
 
     return handler
+
+
+def issue_keys_of(issues) -> list[str]:
+    """What a scan found that the summary counts (critical, warning), as "code|url"."""
+    return sorted({
+        f"{issue.code}|{issue.url or ''}" for issue in issues
+        if getattr(issue.severity, "value", issue.severity) in {"critical", "warning"}
+    })
 
 
 def _refresh_proposals(file_store: SiteFileStore, site, base_url: str, result, issues) -> None:

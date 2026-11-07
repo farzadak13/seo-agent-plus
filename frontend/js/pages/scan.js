@@ -99,6 +99,13 @@ function filePanel(change, { base, act, problem }) {
   );
 }
 
+// A month after the last one (app.scan.monthly.RESCAN_EVERY).
+function nextScan(scan) {
+  const next = new Date(scan.completed_at || scan.requested_at);
+  next.setDate(next.getDate() + 30);
+  return next;
+}
+
 // The middle page's time: one slow page does not make the site slow.
 function medianMs(pages) {
   const times = pages.map((page) => page.speed?.fetch_ms).filter((ms) => typeof ms === "number").sort((a, b) => a - b);
@@ -306,6 +313,7 @@ export async function scanPage(container, { site, alive }) {
             : null,
           fact("صفحهٔ خوانده‌شده", fmt.int(scan.pages.filter((page) => page.status_code !== null).length)),
           fact("مشکل جدی", fmt.int(count("critical"))),
+          typeof scan.new_issue_count === "number" ? fact("مشکل‌های تازه", fmt.int(scan.new_issue_count)) : null,
           fact("قابل بهبود", fmt.int(count("warning"))),
           usual === null ? null : fact("زمان پاسخ معمول (از سرور ما)", `${fmt.pos(usual / 1000)} ثانیه`),
           fact("نقشهٔ سایت", scan.sitemap_urls.length ? `${fmt.int(scan.sitemap_page_count)} صفحه` : "ندارد"),
@@ -314,6 +322,12 @@ export async function scanPage(container, { site, alive }) {
         scan.pages_capped
           ? h("p", { class: "small muted", text: "سایت بیشتر از سقف یک بررسی صفحه داشت؛ این نتیجه همهٔ صفحه‌ها را پوشش نمی‌دهد." })
           : null,
+        scan.last_attempt_error
+          ? h("div", { class: "notice notice-warn", text: scan.last_attempt_error === "site_unreachable"
+              ? "بررسی خودکار ماهانه نتوانست سایت را باز کند. اگر سایت در دسترس است، خودتان «بررسی دوباره» را بزنید؛ وگرنه چند روز بعد دوباره امتحان می‌کنیم."
+              : "بررسی خودکار ماهانه کامل نشد. نتیجهٔ زیر از بررسی قبلی است؛ چند روز بعد دوباره امتحان می‌کنیم." })
+          : null,
+        h("p", { class: "small muted", text: `${scan.trigger === "monthly" ? "این بررسی خودکار ماهانه بود. " : ""}${nextScan(scan) > new Date() ? `بررسی خودکار بعدی حدود ${fmt.localDay(nextScan(scan))} است.` : "بررسی خودکار بعدی به‌زودی انجام می‌شود."}` }),
       ),
     );
     if (filesPanel) area.append(filesPanel);

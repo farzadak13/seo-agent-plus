@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
 from app.action.executor import (
     EXECUTE_ACTION_JOB_TYPE,
@@ -38,6 +39,7 @@ from app.scan.handler import (
     build_site_scan_handler,
 )
 from app.scan.store import SiteFileStore, SiteScanStore
+from app.scan.monthly import RESCAN_ROUND_SECONDS, MonthlyRescan
 from app.reasoning.keywords import KeywordSuggester
 from app.descriptions.handler import DESCRIPTION_JOB_TYPE, build_description_handler
 from app.descriptions.writer import DescriptionWriter
@@ -93,6 +95,7 @@ class RuntimeContainer:
     purge_loop: WarehouseLoop | None = None
     measurement_loop: WarehouseLoop | None = None
     rank_loop: WarehouseLoop | None = None
+    rescan_loop: WarehouseLoop | None = None
     target_store: TargetKeywordStore | None = None
     billing: object | None = None
     otp: object | None = None
@@ -113,8 +116,12 @@ class RuntimeContainer:
                 self.measurement_loop.start()
             if self.rank_loop is not None:
                 self.rank_loop.start()
+            if self.rescan_loop is not None:
+                self.rescan_loop.start()
 
     def stop(self) -> None:
+        if self.rescan_loop is not None:
+            self.rescan_loop.stop()
         if self.rank_loop is not None:
             self.rank_loop.stop()
         if self.measurement_loop is not None:
@@ -372,6 +379,15 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
         ),
         measurement_loop=measurement_loop,
         rank_loop=rank_loop,
+        # Beside the worker like the others: one server queues the month's scans.
+        rescan_loop=WarehouseLoop(
+            MonthlyRescan(
+                site_store=site_store, scan_store=scan_store, job_store=job_store,
+                job_id_factory=lambda: f"job-{uuid4().hex}", transaction=repository.transaction,
+                active=lambda tenant_id: billing.entitlement(tenant_id).active,
+            ),
+            interval_seconds=RESCAN_ROUND_SECONDS, should_run=lambda: worker.running, name="monthly-rescan",
+        ),
         target_store=target_store,
         billing=billing,
         otp=otp,
