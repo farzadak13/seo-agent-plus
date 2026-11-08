@@ -26,8 +26,10 @@ CLOSED = frozenset({"robots_blocks_everything", "robots_error"})
 # A problem that keeps at least half the pages out of Google.
 WIDESPREAD_CEILING = 40
 WIDESPREAD_SHARE = 0.5
-# A page that did not answer this time is not the site's fault (yet).
-NOT_COUNTED = frozenset({"page_no_answer"})
+# A page that did not answer this time is not the site's fault (yet). The rest
+# are advice Google's ranking does not weigh: for search by AI, the page's
+# direction (CSS often sets it) and how a shared link looks.
+NOT_COUNTED = frozenset({"page_no_answer", "ai_robots_blocked", "no_llms_txt", "missing_rtl", "missing_open_graph"})
 
 
 def health_score(issues: list[ScanIssue], pages: list[ScannedPage]) -> int | None:

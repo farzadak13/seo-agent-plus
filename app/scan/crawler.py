@@ -10,6 +10,9 @@ is also how the pages for a new sitemap are found.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import threading
 import time
 import xml.etree.ElementTree as ElementTree
@@ -23,7 +26,7 @@ from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 from urllib.request import Request
 from urllib.robotparser import RobotFileParser
 
-from app.models.site_scan import PageSpeedSignals, ScannedPage
+from app.models.site_scan import PageMarkup, PageSpeedSignals, ScannedPage
 from app.net.guard import UnsafeAddressError, open_public, same_site
 from app.normalization.url import canonicalize_url
 from app.scan.robots_rules import google_allows
@@ -185,6 +188,19 @@ class _PageParser(HTMLParser):
         self.images_unsized = 0
         self.images_not_lazy = 0
         self.images_old_format = 0
+        # Markup (app.models.site_scan.PageMarkup).
+        self.lang: str | None = None
+        self.rtl = False
+        self.viewport = False
+        self.open_graph = False
+        self.images_without_alt = 0
+        self.insecure_resources = 0
+        self.json_ld: list[str] = []
+        self.microdata_types: list[str] = []
+        self._json_ld: list[str] | None = None
+        # The visible text, hashed as it is read rather than kept.
+        self._text_hash = hashlib.sha1()
+        self._text_words = 0
         # Inside <picture> with a WebP or AVIF <source>: its <img> is only the fallback.
         self._picture = False
         self._picture_modern = False
@@ -195,6 +211,9 @@ class _PageParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         values = {name: value or "" for name, value in attrs}
         self._note_speed(tag, values)
+        self._note_markup(tag, values)
+        if tag == "script" and values.get("type", "").strip().lower() == "application/ld+json" and not self._skip_depth:
+            self._json_ld = []
         if tag in self._SKIPPED_TEXT:
             self._skip_depth += 1
             return
@@ -202,6 +221,10 @@ class _PageParser(HTMLParser):
             self.links.append(values["href"])
         elif tag == "meta":
             name = values.get("name", "").lower()
+            if name == "viewport":
+                self.viewport = True
+            if values.get("property", "").lower() in {"og:title", "og:image"} or name in {"og:title", "og:image"}:
+                self.open_graph = True
             if name == "description" and self.meta_description is None:
                 self.meta_description = " ".join(values.get("content", "").split()) or None
             elif name in {"robots", "googlebot"} and _says_noindex(values.get("content", "")):
@@ -257,7 +280,36 @@ class _PageParser(HTMLParser):
             if source.endswith(self._OLD_FORMATS) and not (self._picture and self._picture_modern):
                 self.images_old_format += 1
 
+    _RESOURCE_TAGS = frozenset({"img", "script", "iframe", "source", "video", "audio", "embed"})
+    MAX_JSON_LD = 10
+    MAX_TEXT_WORDS = 20_000
+
+    def _note_markup(self, tag, values):
+        if tag in {"html", "body"}:
+            if tag == "html" and values.get("lang"):
+                self.lang = values["lang"].strip().lower()[:20] or None
+            if values.get("dir", "").strip().lower() == "rtl":
+                self.rtl = True
+        # One or more types, as full addresses (itemtype) or prefixed (typeof="schema:Product").
+        for kind in (values.get("itemtype") or values.get("typeof") or "").split():
+            name = kind.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1][:60]
+            if name and name not in self.microdata_types and len(self.microdata_types) < 10:
+                self.microdata_types.append(name)
+        if self._skip_depth:
+            return
+        if tag == "img" and "alt" not in values:
+            self.images_without_alt += 1
+        address = values.get("src", "") if tag in self._RESOURCE_TAGS else ""
+        if tag == "link" and "stylesheet" in values.get("rel", "").lower().split():
+            address = values.get("href", "")
+        if address.strip().lower().startswith("http://"):
+            self.insecure_resources += 1
+
     def handle_endtag(self, tag):
+        if tag == "script" and self._json_ld is not None:
+            if len(self.json_ld) < self.MAX_JSON_LD:
+                self.json_ld.append("".join(self._json_ld))
+            self._json_ld = None
         if tag == "head":
             self.in_head = False
         elif tag == "picture":
@@ -274,12 +326,65 @@ class _PageParser(HTMLParser):
             self._capture = None
 
     def handle_data(self, data):
+        if self._json_ld is not None:
+            self._json_ld.append(data)
         if self._skip_depth:
             return
         if self._capture:
             self._buffer.append(data)
         if self._capture != "title":
-            self.words += len(data.split())
+            words = data.split()
+            self.words += len(words)
+            if words:
+                self._text_hash.update((" ".join(words) + " ").encode("utf-8"))
+                self._text_words += len(words)
+
+    def text_hash(self) -> str | None:
+        """The visible text, hashed; None when there is too little of it to call a copy."""
+        if self._text_words < 50:
+            return None
+        return self._text_hash.hexdigest()[:16]
+
+
+# Dates in structured data are Gregorian and ISO 8601 (2026-11-08); a Persian
+# calendar date (1405/08/17) or Persian digits are not read by Google.
+_ISO_DATE = re.compile(r"^(19|20)\d\d(-\d\d(-\d\d)?)?($|[T ])")
+_PERSIAN_DIGITS = re.compile(r"[\u06f0-\u06f9\u0660-\u0669]")
+_NUMBER_KEYS = frozenset({"price", "lowprice", "highprice", "ratingvalue", "reviewcount", "ratingcount", "bestrating", "worstrating"})
+
+
+def _read_json_ld(blocks: list[str]) -> tuple[list[str], list[str]]:
+    """(the types, what is wrong): invalid JSON, Persian digits in a number, a date Google cannot read."""
+    types: list[str] = []
+    problems: list[str] = []
+
+    def walk(value, key=""):
+        if isinstance(value, dict):
+            kind = value.get("@type")
+            for each in kind if isinstance(kind, list) else [kind]:
+                if isinstance(each, str) and each and len(types) < 10 and each not in types:
+                    types.append(each[:60])
+            for name, inner in value.items():
+                walk(inner, str(name))
+        elif isinstance(value, list):
+            for inner in value:
+                walk(inner, key)
+        elif isinstance(value, str):
+            lowered = key.lower()
+            if lowered in _NUMBER_KEYS and _PERSIAN_DIGITS.search(value) and "persian_digits" not in problems:
+                problems.append("persian_digits")
+            is_date = lowered.startswith("date") or lowered.endswith("date") or lowered == "pricevaliduntil"
+            if is_date and value.strip() and not _ISO_DATE.match(value.strip()):
+                if "bad_date" not in problems:
+                    problems.append("bad_date")
+
+    for block in blocks:
+        try:
+            walk(json.loads(block))
+        except (ValueError, RecursionError):
+            if "invalid" not in problems:
+                problems.append("invalid")
+    return types, problems[:5]
 
 
 def _says_noindex(value: str) -> bool:
@@ -378,6 +483,11 @@ class CrawlResult:
     sitemap_rich: bool = False
     pages: list[ScannedPage] = field(default_factory=list)
     pages_capped: bool = False
+    # Which read page links to which page of the site, by identity (_identity),
+    # for links to broken or moved pages, pages nothing links to, and how deep a
+    # page sits. Not kept with the scan: its issues are.
+    links: dict[str, set[str]] = field(default_factory=dict)
+    llms_txt: bool = False
 
 
 class SiteCrawler:
@@ -401,10 +511,26 @@ class SiteCrawler:
         self._robots_lines: list[str] = []
         self._sitemap_rich = False
 
+    # The worker runs one job at a time: a longer scan holds every other customer's.
+    MAX_BUDGET_FACTOR = 2.0
+
+    def read_up_to(self, max_pages: int) -> None:
+        """Read up to this many pages, with more time for them, but never more than twice
+        the usual: what does not fit is read on the next scan's turn (pages_capped)."""
+        factor = min(self.MAX_BUDGET_FACTOR, max(1.0, max_pages / max(1, self._max_pages)))
+        self._budget = self._budget * factor
+        self._max_pages = max_pages
+
     def crawl(self, base_url: str) -> CrawlResult:
         result = CrawlResult()
         deadline = self._clock() + self._budget
         robots = self._read_robots(base_url, result)
+        llms_url = urljoin(base_url, "/llms.txt")
+        if robots.can_fetch(ROBOTS_NAME, llms_url):
+            llms = self._fetch(llms_url, 64_000)
+            result.llms_txt = llms.status == 200 and "html" not in llms.content_type.lower() and bool(llms.body.strip())
+        else:
+            result.llms_txt = True  # not ours to look at: nothing said about it
         asked = robots.crawl_delay("*") or 0
         delay = max(self._delay, min(float(asked), MAX_CRAWL_DELAY_SECONDS))
         self._sitemap_rich = False
@@ -416,6 +542,7 @@ class SiteCrawler:
 
         queue: list[str] = []
         queued: set[str] = set()
+        interned: dict[str, str] = {}
         paths: set[str] = set()
         for url in [base_url, *sitemap_pages]:
             if _identity(url) not in queued:
@@ -440,11 +567,16 @@ class SiteCrawler:
             if position == 1:
                 result.home_status = page.status_code
             result.pages.append(page)
+            linked = result.links.setdefault(_identity(url), set())
             for href in links:
                 link = _clean_link(page.redirected_to or url, href)
                 if link is None or not _is_on_site(base_url, link):
                     continue
                 identity = _identity(link)
+                # One string per address, shared by every page that links to it.
+                identity = interned.setdefault(identity, identity)
+                if len(linked) < MAX_QUEUE:
+                    linked.add(identity)
                 # The same page with ?replytocom=, ?orderby= and the like is the
                 # same page: following them fills the scan and the report with copies.
                 if identity in queued or (urlsplit(link).query and _without_query(link) in paths):
@@ -577,6 +709,9 @@ class SiteCrawler:
             parser.close()
         except (AssertionError, ValueError, IndexError):
             pass  # what was read before the markup broke down still counts
+        schema_types, schema_problems = _read_json_ld(parser.json_ld)
+        schema_types = (schema_types + [kind for kind in parser.microdata_types if kind not in schema_types])[:10]
+        secure = urlsplit(answer.final_url or url).scheme == "https"
         return (
             ScannedPage(
                 url=url,
@@ -600,6 +735,17 @@ class SiteCrawler:
                     images_unsized=parser.images_unsized,
                     images_not_lazy=parser.images_not_lazy,
                     images_old_format=parser.images_old_format,
+                ),
+                markup=PageMarkup(
+                    lang=parser.lang,
+                    rtl=parser.rtl,
+                    viewport=parser.viewport,
+                    open_graph=parser.open_graph,
+                    images_without_alt=parser.images_without_alt,
+                    insecure_resources=parser.insecure_resources if secure else 0,
+                    schema_types=schema_types,
+                    schema_problems=schema_problems,
+                    text_hash=parser.text_hash(),
                 ),
             ),
             parser.links,

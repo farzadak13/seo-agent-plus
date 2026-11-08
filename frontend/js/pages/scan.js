@@ -161,9 +161,10 @@ function issueList(issues, { askDescription } = {}) {
       urls.length
         ? h("details", { class: "small" },
             h("summary", { class: "muted", text: "صفحه‌ها" }),
-            h("ul", { class: "issue-urls" }, urls.slice(0, 50).map((url) => h("li", {},
-              h("a", { class: "page-url", href: url, target: "_blank", rel: "noopener noreferrer", title: url, text: readableUrl(url) }),
-              askDescription && DESCRIPTION_CODES.has(code) ? [" ", askButton(url, askDescription)] : null))))
+            h("ul", { class: "issue-urls" }, items.filter((item) => item.url).slice(0, 50).map((item) => h("li", {},
+              h("a", { class: "page-url", href: item.url, target: "_blank", rel: "noopener noreferrer", title: item.url, text: readableUrl(item.url) }),
+              item.detail?.from ? h("span", { class: "muted", text: ` · لینک از ${readableUrl(item.detail.from)}` }) : null,
+              askDescription && DESCRIPTION_CODES.has(code) ? [" ", askButton(item.url, askDescription)] : null))))
         : null,
     );
   });

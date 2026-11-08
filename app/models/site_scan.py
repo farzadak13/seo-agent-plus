@@ -41,6 +41,27 @@ class ScanIssue(BaseModel):
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
+class PageMarkup(BaseModel):
+    """What the page's markup says beyond its title: language, phones, sharing, structured data."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    lang: str | None = None
+    # rtl on <html> or <body>.
+    rtl: bool = False
+    viewport: bool = False
+    open_graph: bool = False
+    # <img> with no alt at all (alt="" is a decorative image, said on purpose).
+    images_without_alt: int = Field(default=0, ge=0)
+    # http:// images, scripts, styles and frames on an https page.
+    insecure_resources: int = Field(default=0, ge=0)
+    # The @type of each JSON-LD block, and what was wrong with them.
+    schema_types: list[str] = Field(default_factory=list, max_length=10)
+    schema_problems: list[str] = Field(default_factory=list, max_length=5)
+    # The page's visible text, hashed, to find pages that say exactly the same.
+    text_hash: str | None = None
+
+
 class PageSpeedSignals(BaseModel):
     """What the page's own HTML and its answer say about speed, without a browser.
 
@@ -88,6 +109,9 @@ class ScannedPage(BaseModel):
     in_sitemap: bool = False
     word_count: int = 0
     speed: PageSpeedSignals | None = None
+    # How a search engine and a browser take the page (app.scan.issues reads them).
+    # None on pages read before these were looked at.
+    markup: PageMarkup | None = None
 
 
 class SiteScan(BaseModel):

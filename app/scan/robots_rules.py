@@ -45,8 +45,20 @@ def parse_groups(lines: list[str]) -> list[Group]:
 
 
 def groups_for_google(groups: list[Group]) -> list[Group]:
-    named = [group for group in groups if GOOGLE in group.agents]
+    return groups_for(groups, GOOGLE)
+
+
+def groups_for(groups: list[Group], agent: str) -> list[Group]:
+    named = [group for group in groups if agent in group.agents]
     return named or [group for group in groups if "*" in group.agents]
+
+
+def closed_to(lines: list[str], agent: str) -> bool:
+    """A "Disallow: /" in the group this robot obeys, with nothing let in."""
+    rules = [rule for group in groups_for(parse_groups(lines), agent.lower()) for rule in group.rules]
+    return any(name == "disallow" and value == "/" for _, name, value in rules) and not any(
+        name == "allow" and value for _, name, value in rules
+    )
 
 
 def blocking_lines(lines: list[str]) -> list[int]:

@@ -20,7 +20,7 @@ from app.scan.crawler import (
     read_robots_answer,
 )
 from app.scan.files import FilePlan, plan_site_files, robots_can_be_judged, sitemap_can_be_judged
-from app.scan.issues import build_issues
+from app.scan.issues import TECHNICAL_CODES, build_issues
 from app.scan.score import health_score
 from app.scan.store import SiteFileStore, SiteScanStore
 
@@ -49,7 +49,15 @@ def build_site_scan_handler(
     file_store: SiteFileStore,
     crawler_factory: Callable[[], SiteCrawler] = SiteCrawler,
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    # How many pages the tenant's plan reads; None: the crawler's own limit.
+    pages_of: Callable[[str], int | None] = lambda tenant_id: None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    def read_technically(site_id: str) -> bool:
+        """Whether the last finished scan read pages with the technical checks
+        (their markup is there); one before them has none on any page."""
+        done = scan_store.completed(site_id)
+        return done is not None and any(page.markup is not None for page in done.pages)
+
     def handler(payload: dict[str, Any]) -> dict[str, Any]:
         site_id = str(payload["site_id"])
         scan = scan_store.find(site_id)
@@ -70,7 +78,11 @@ def build_site_scan_handler(
             return latest is None or latest.job_id != running.job_id
 
         try:
-            result = crawler_factory().crawl(base_url)
+            crawler = crawler_factory()
+            pages = pages_of(running.tenant_id)
+            if pages:
+                crawler.read_up_to(pages)
+            result = crawler.crawl(base_url)
             issues = build_issues(result)
             # Nobody asked for a monthly scan: a site that did not answer this
             # time is a failed try, not a month of "nothing found" over what the
@@ -100,7 +112,7 @@ def build_site_scan_handler(
                         "health_score": health_score(issues, result.pages),
                         # Only against a finished scan before it; the first one has nothing to compare.
                         "new_issue_count": (
-                            len(set(issue_keys_of(issues)) - set(running.previous_issues))
+                            new_since(issue_keys_of(issues), running.previous_issues, technical_before=read_technically(site_id))
                             if running.previous_issues is not None else None
                         ),
                     }
@@ -117,6 +129,15 @@ def build_site_scan_handler(
         return {"site_id": site_id, "pages": len(completed.pages), "issues": len(issues)}
 
     return handler
+
+
+def new_since(now: list[str], before: list[str], *, technical_before: bool) -> int:
+    """What this scan found that the one before did not. A scan made before the
+    technical checks could not have found what they find: that is not new."""
+    fresh = set(now) - set(before)
+    if not technical_before:
+        fresh = {key for key in fresh if key.split("|", 1)[0] not in TECHNICAL_CODES}
+    return len(fresh)
 
 
 def issue_keys_of(issues) -> list[str]:

@@ -266,3 +266,13 @@ test("a monthly scan that failed otherwise says the result is the one before", a
   const container = await open(t);
   assert.ok(container.textContent.includes("بررسی خودکار کامل نشد."));
 });
+
+test("a broken page says which page links to it", async (t) => {
+  server.scan = scan({ issues: [
+    { code: "broken_page", severity: "warning", url: "https://shop.test/gone", detail: { status: 404, from: "https://shop.test/blog/post" } },
+    { code: "arabic_letters", severity: "warning", url: "https://shop.test/a", detail: { in: "title" } },
+  ] });
+  const container = await open(t);
+  assert.ok(container.textContent.includes("لینک از /blog/post"));
+  assert.ok(container.textContent.includes("«ي» و «ك» عربی در عنوان یا توضیحات"));
+});

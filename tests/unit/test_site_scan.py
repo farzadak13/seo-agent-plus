@@ -15,7 +15,7 @@ from app.scan import crawler
 from app.scan.files import plan_site_files
 from app.jobs import JobHandlerRegistry, JobScheduler, JobStore
 from app.models.site_files import SiteFileChange, SiteFileKind, SiteFileStatus
-from app.models.site_scan import ScannedPage, ScanStatus, SiteScan
+from app.models.site_scan import ScanIssue, ScannedPage, ScanStatus, SiteScan
 from app.models.sites import Site, SiteAdapterConnection
 from app.onboarding.site_store import SiteStore
 from app.persistence.memory import InMemoryRepository
@@ -1805,3 +1805,226 @@ def test_a_plan_scanned_weekly_is_scanned_a_week_after_its_last_scan_and_told_wh
     assert weekly.run_round()["queued"] == 0
     world.now += timedelta(minutes=2)
     assert weekly.run_round()["queued"] == 1
+
+
+
+# Technical SEO, phase one: what a page's markup and the site's links say.
+
+
+def page_html(*, title="کفش ورزشی مردانه | فروشگاه نمونه", head="", body="", links=(), html_attrs='lang="fa" dir="rtl"', description="توضیح"):
+    anchors = "".join(f'<a href="{link}">x</a>' for link in links)
+    text = body or " ".join(f"واژه{n}" for n in range(200))  # each page its own text
+    return (
+        f"<html {html_attrs}><head><title>{title}</title><meta name='description' content='{description}'>"
+        f"<meta name='viewport' content='width=device-width'><meta property='og:title' content='x'>{head}</head>"
+        f"<body><h1>سرتیتر</h1>{text}{anchors}</body></html>"
+    ).encode("utf-8")
+
+
+def codes_for(site_pages, **site):
+    world = World(FakeSite(site_pages, **site))
+    scan = world.scan()
+    return {(issue["code"], issue["url"]) for issue in scan["issues"]}, scan
+
+
+def test_a_clean_persian_page_raises_none_of_the_new_issues():
+    found, _ = codes_for({"/": page_html(head='<script type="application/ld+json">{"@type": "Organization"}</script>')})
+    new = {"arabic_letters", "long_url", "soft_404", "missing_lang", "wrong_lang", "missing_rtl", "missing_viewport",
+           "missing_open_graph", "images_without_alt", "mixed_content", "schema_invalid", "schema_persian_digits",
+           "schema_bad_date", "no_structured_data", "duplicate_content"}
+    assert not {code for code, _ in found} & new
+
+
+def test_markup_problems_are_found_page_by_page():
+    found, _ = codes_for({
+        "/": page_html(links=["/a", "/b", "/c"]),
+        "/a": page_html(title="كفش ورزشي مردانه", html_attrs="", head="", body="متن " + " ".join(f"الف{n}" for n in range(200))),
+        "/b": page_html(
+            body=" ".join(f"ب{n}" for n in range(200)) + '<img src="http://cdn.example/x.jpg"><img src="/y.jpg" alt="">',
+            head='<script type="application/ld+json">{"@type":"Product","offers":{"price":"۱۲۰۰","priceValidUntil":"1405/08/17"}}</script>'
+                 '<script type="application/ld+json">{oops</script>',
+        ),
+        "/c": page_html(title="صفحه پیدا نشد", body="متاسفیم"),
+    })
+    a, b, c = f"{BASE}a", f"{BASE}b", f"{BASE}c"
+    assert {("arabic_letters", a), ("missing_lang", a), ("missing_rtl", a)} <= found
+    assert ("mixed_content", b) in found  # an http image on an https page
+    assert {("images_without_alt", b), ("schema_invalid", b), ("schema_persian_digits", b), ("schema_bad_date", b)} <= found
+    assert ("soft_404", c) in found
+    assert ("images_without_alt", a) not in found, "alt=\"\" is a decorative image, said on purpose"
+
+
+def test_an_https_page_with_http_resources_is_mixed_content():
+    from app.scan.crawler import _PageParser
+
+    parser = _PageParser()
+    parser.feed('<html><head><link rel="stylesheet" href="http://x.example/a.css"></head>'
+                '<body><img src="http://x.example/a.jpg"><script src="https://x.example/a.js"></script></body></html>')
+    assert parser.insecure_resources == 2
+
+
+def test_links_say_which_page_is_moved_unlinked_or_deep_and_who_links_to_a_broken_one():
+    pages = {
+        "/": page_html(links=["/one", "/old", "/gone"]),
+        "/one": page_html(links=["/two"], body=" ".join(f"یک{n}" for n in range(200))),
+        "/two": page_html(links=["/three"], body=" ".join(f"دو{n}" for n in range(200))),
+        "/three": page_html(links=["/four"], body=" ".join(f"سه{n}" for n in range(200))),
+        "/four": page_html(body=" ".join(f"چهار{n}" for n in range(200))),
+        "/lonely": page_html(body=" ".join(f"تنها{n}" for n in range(200))),
+        "/new": page_html(body=" ".join(f"تازه{n}" for n in range(200))),
+        "/old": Fetched(status=200, body=page_html(body=" ".join(f"تازه{n}" for n in range(200))),
+                        final_url=f"{BASE}new", content_type="text/html"),
+        "/gone": Fetched(status=404, final_url=f"{BASE}gone"),
+    }
+    sitemap = ("<urlset>" + "".join(f"<url><loc>{BASE}{path}</loc></url>" for path in ("", "one", "lonely", "four")) + "</urlset>").encode()
+    world = World(FakeSite(pages, robots="Sitemap: " + f"{BASE}sitemap.xml", sitemaps={"/sitemap.xml": sitemap}))
+    issues = world.scan()["issues"]
+    by = {(issue["code"], issue["url"]): issue for issue in issues}
+    assert ("orphan_page", f"{BASE}lonely") in by
+    assert by[("deep_page", f"{BASE}four")]["detail"]["clicks"] == 4
+    assert ("internal_link_redirects", f"{BASE}old") in by
+    assert by[("broken_page", f"{BASE}gone")]["detail"]["from"] == BASE
+
+
+def test_ai_robots_closed_and_no_llms_txt_are_advice_and_not_in_the_score():
+    from app.scan.score import health_score
+
+    found, scan = codes_for({"/": page_html()}, robots="User-agent: GPTBot\nDisallow: /\n\nUser-agent: *\nAllow: /\n")
+    ai = next(issue for issue in scan["issues"] if issue["code"] == "ai_robots_blocked")
+    assert ai["detail"]["robots"] == ["GPTBot"]
+    assert ("no_llms_txt", None) in found
+    issues = [ScanIssue(**issue) for issue in scan["issues"]]
+    pages = [ScannedPage(**page) for page in scan["pages"]]
+    without = [issue for issue in issues if issue.code not in {"ai_robots_blocked", "no_llms_txt"}]
+    assert health_score(issues, pages) == health_score(without, pages)
+
+
+def test_a_site_with_llms_txt_is_not_told_to_add_one():
+    pages = {"/": page_html(), "/llms.txt": Fetched(status=200, body=b"# Shop\n", content_type="text/plain")}
+    found, _ = codes_for(pages)
+    assert ("no_llms_txt", None) not in found
+
+
+def test_the_gold_plan_reads_more_pages_with_time_for_them():
+    from app.scan.crawler import SiteCrawler
+
+    crawler = SiteCrawler(fetcher=FakeSite({}), max_pages=100, time_budget_seconds=120)
+    crawler.read_up_to(300)
+    assert crawler._max_pages == 300 and crawler._budget == 240, "never more than twice the usual time"
+
+
+def test_the_scan_reads_as_many_pages_as_the_tenants_plan():
+    from app.scan.crawler import SiteCrawler
+
+    asked = []
+
+    class Counting(SiteCrawler):
+        def read_up_to(self, max_pages):
+            asked.append(max_pages)
+            super().read_up_to(max_pages)
+
+    world = World(new_site())
+    world.scan_handler = build_site_scan_handler(
+        site_store=world.sites, scan_store=world.scans, file_store=world.files,
+        crawler_factory=lambda: Counting(fetcher=world.fake_site, delay_seconds=0, sleep=lambda _: None),
+        pages_of=lambda tenant_id: 300 if tenant_id == "principal-1" else None,
+    )
+    world.client.post("/v1/sites/site-1/scans")
+    world.scan_handler({"site_id": "site-1", "job_id": world.scans.find("site-1").job_id})
+    assert asked == [300]
+
+
+
+def test_jalali_dates_where_plugins_leak_them_are_found():
+    from app.scan.crawler import _read_json_ld
+
+    assert _read_json_ld(['{"@type":"Article","datePublished":"1405/08/17","dateModified":"۱۴۰۵-۰۸-۱۸"}'])[1] == ["bad_date"]
+    assert _read_json_ld(['{"@type":"Article","datePublished":"2026-11-08T10:00:00+03:30","foundingDate":"2016","dateline":""}'])[1] == []
+
+
+def test_microdata_counts_as_structured_data():
+    found, scan = codes_for({"/": page_html(body=" ".join(f"م{n}" for n in range(200)) + '<div itemscope itemtype="https://schema.org/Product">x</div>')})
+    assert ("no_structured_data", None) not in found
+    assert scan["pages"][0]["markup"]["schema_types"] == ["Product"]
+
+
+def test_whole_site_checks_that_fire():
+    found, _ = codes_for({"/": page_html(html_attrs='lang="en-US"', head="").replace(
+        b"<meta name='viewport' content='width=device-width'><meta property='og:title' content='x'>", b"")})
+    codes = {code for code, _ in found}
+    assert {"wrong_lang", "missing_viewport", "missing_open_graph", "no_structured_data"} <= codes
+    clean, _ = codes_for({"/": page_html(html_attrs='lang="fa-IR" dir="rtl"')})
+    assert "wrong_lang" not in {code for code, _ in clean}
+
+
+def test_an_arabic_page_keeps_its_own_letters():
+    found, _ = codes_for({"/": page_html(title="زيارة كربلاء", html_attrs='lang="ar" dir="rtl"')})
+    codes = {code for code, _ in found}
+    assert "arabic_letters" not in codes and "wrong_lang" not in codes
+
+
+def test_a_long_persian_address_is_said():
+    slug = "خرید-" + "-".join(["کفش-ورزشی-مردانه"] * 8)
+    found, _ = codes_for({"/": page_html(links=[f"/{slug}"]), f"/{slug}": page_html(body=" ".join(f"ک{n}" for n in range(200)))})
+    assert any(code == "long_url" for code, _ in found)
+
+
+def test_pages_saying_the_same_are_one_problem_not_three():
+    same = " ".join(f"یکسان{n}" for n in range(200))
+    found, _ = codes_for({
+        "/": page_html(links=["/a", "/b", "/c", "/d"]),
+        "/a": page_html(title="عنوان الف برای صفحهٔ الف", body=same, description="الف"),
+        "/b": page_html(title="عنوان ب برای صفحهٔ ب", body=same, description="ب"),
+        "/c": page_html(title="صفحهٔ جیم با عنوان خودش", head='<link rel="canonical" href="/a">', body=same, description="ج"),
+        "/d": page_html(title="عنوان الف برای صفحهٔ الف", body=same, description="د"),
+    })
+    duplicates = {url for code, url in found if code == "duplicate_content"}
+    assert f"{BASE}b" in duplicates
+    assert f"{BASE}c" not in duplicates, "a page that names another as canonical said so already"
+    assert f"{BASE}d" not in duplicates and f"{BASE}a" not in duplicates, "already a duplicate title"
+
+
+def test_a_page_reached_through_a_redirect_is_not_orphan():
+    pages = {
+        "/": page_html(links=["/old"]),
+        "/old": Fetched(status=200, body=page_html(body=" ".join(f"ن{n}" for n in range(200))), final_url=f"{BASE}new", content_type="text/html"),
+        "/new": page_html(body=" ".join(f"ن{n}" for n in range(200))),
+    }
+    sitemap = f"<urlset><url><loc>{BASE}</loc></url><url><loc>{BASE}new</loc></url></urlset>".encode()
+    world = World(FakeSite(pages, robots=f"Sitemap: {BASE}sitemap.xml", sitemaps={"/sitemap.xml": sitemap}))
+    issues = world.scan()["issues"]
+    assert not any(issue["code"] == "orphan_page" and issue["url"] == f"{BASE}new" for issue in issues)
+    moved = next(issue for issue in issues if issue["code"] == "internal_link_redirects")
+    assert moved["detail"]["from"] == BASE
+
+
+def test_the_first_scan_with_the_technical_checks_does_not_call_them_new():
+    from app.scan.handler import new_since
+
+    before = ["missing_title|https://x/a"]
+    now = ["missing_title|https://x/a", "arabic_letters|https://x/a", "missing_title|https://x/b"]
+    assert new_since(now, before, technical_before=False) == 1
+    assert new_since(now, before, technical_before=True) == 2
+
+
+def test_a_clean_site_that_later_breaks_hears_it_as_new():
+    site = FakeSite({"/": page_html()})
+    world = World(site)
+    world.scan()  # read with the technical checks, and nothing wrong
+    site.pages["/"] = page_html(body=" ".join(f"و{n}" for n in range(200)) + '<img src="http://cdn.example/x.jpg" alt="x">')
+    world.now += timedelta(minutes=10)
+    assert world.scan()["new_issue_count"] == 1  # mixed content
+
+
+def test_a_scan_from_before_the_technical_checks_does_not_make_them_new():
+    site = FakeSite({"/": page_html(body=" ".join(f"و{n}" for n in range(200)) + '<img src="http://cdn.example/x.jpg" alt="x">')})
+    world = World(site)
+    world.scan()
+    done = world.scans.completed("site-1")
+    # As a scan saved before PageMarkup existed.
+    world.scans.save(done.model_copy(update={
+        "pages": [page.model_copy(update={"markup": None}) for page in done.pages],
+        "job_id": "job-old", "issues": [issue for issue in done.issues if issue.code != "mixed_content"],
+    }))
+    world.now += timedelta(minutes=10)
+    assert world.scan()["new_issue_count"] == 0

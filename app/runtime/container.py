@@ -292,7 +292,10 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     file_store = SiteFileStore(repository)
     handlers.register(
         SITE_SCAN_JOB_TYPE,
-        build_site_scan_handler(site_store=site_store, scan_store=scan_store, file_store=file_store),
+        build_site_scan_handler(
+            site_store=site_store, scan_store=scan_store, file_store=file_store,
+            pages_of=lambda tenant_id: billing.limits(tenant_id).scan_pages,
+        ),
     )
     handlers.register(
         SITE_FILE_JOB_TYPE,

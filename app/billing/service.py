@@ -94,7 +94,7 @@ class Billing:
         chosen = self.plans[plan]
         return Limits(
             changes_a_month=chosen.changes_a_month, targets=chosen.targets, rescan_every=chosen.rescan_every,
-            competitors=chosen.competitors,
+            competitors=chosen.competitors, scan_pages=chosen.scan_pages,
         )
 
     def basic_writer(self, tenant_id: str) -> bool:

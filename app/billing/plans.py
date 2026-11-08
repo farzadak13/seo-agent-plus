@@ -36,6 +36,8 @@ class Plan:
     rescan_every: timedelta = timedelta(days=30)
     # Where the competitors stand for each word, from the same weekly search.
     competitors: bool = False
+    # Pages one scan reads.
+    scan_pages: int = 100
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,7 @@ class Limits:
     targets: int
     rescan_every: timedelta
     competitors: bool = False
+    scan_pages: int = 100
 
 
 # A tenant with no subscription keeps working as before sign-up existed.
@@ -65,6 +68,7 @@ _CHANGES = {PlanId.TRIAL: 10, PlanId.BASIC: 20, PlanId.GOLD: 100}
 _TARGETS = {PlanId.TRIAL: 10, PlanId.BASIC: 10, PlanId.GOLD: 50}
 _RESCAN = {PlanId.TRIAL: timedelta(days=30), PlanId.BASIC: timedelta(days=30), PlanId.GOLD: timedelta(days=7)}
 _COMPETITORS = {PlanId.TRIAL: False, PlanId.BASIC: False, PlanId.GOLD: True}
+_SCAN_PAGES = {PlanId.TRIAL: 100, PlanId.BASIC: 100, PlanId.GOLD: 300}
 # Zarinpal takes at least 1,000 tomans; anything lower is a typo in the setting.
 MIN_PRICE = 1_000
 
@@ -93,7 +97,7 @@ def catalog(prices: dict[PlanId, int] | None = None) -> dict[PlanId, Plan]:
             plan_id=plan, name=_NAMES[plan], sites=_SITES[plan],
             price=0 if plan == PlanId.TRIAL else prices[plan], basic_writer=_BASIC_WRITER[plan],
             changes_a_month=_CHANGES[plan], targets=_TARGETS[plan], rescan_every=_RESCAN[plan],
-            competitors=_COMPETITORS[plan],
+            competitors=_COMPETITORS[plan], scan_pages=_SCAN_PAGES[plan],
         )
         for plan in PlanId
     }
