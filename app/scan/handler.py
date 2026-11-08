@@ -20,7 +20,8 @@ from app.scan.crawler import (
     read_robots_answer,
 )
 from app.scan.files import FilePlan, plan_site_files, robots_can_be_judged, sitemap_can_be_judged
-from app.scan.issues import TECHNICAL_CODES, build_issues
+from app.scan.issues import ADDED_IN, CHECKS_VERSION, build_issues
+from app.scan.probe import probe_site
 from app.scan.score import health_score
 from app.scan.store import SiteFileStore, SiteScanStore
 
@@ -47,16 +48,20 @@ def build_site_scan_handler(
     site_store: SiteStore,
     scan_store: SiteScanStore,
     file_store: SiteFileStore,
-    crawler_factory: Callable[[], SiteCrawler] = SiteCrawler,
+    crawler_factory: Callable[[], SiteCrawler] = lambda: SiteCrawler(prober=probe_site),
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     # How many pages the tenant's plan reads; None: the crawler's own limit.
     pages_of: Callable[[str], int | None] = lambda tenant_id: None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    def read_technically(site_id: str) -> bool:
-        """Whether the last finished scan read pages with the technical checks
-        (their markup is there); one before them has none on any page."""
+    def checks_before(site_id: str) -> int:
+        """Which checks the last finished scan was made with (app.scan.issues.ADDED_IN).
+        One made before the version was kept says so by its pages: markup or not."""
         done = scan_store.completed(site_id)
-        return done is not None and any(page.markup is not None for page in done.pages)
+        if done is None:
+            return CHECKS_VERSION
+        if done.checks_version:
+            return done.checks_version
+        return 1 if any(page.markup is not None for page in done.pages) else 0
 
     def handler(payload: dict[str, Any]) -> dict[str, Any]:
         site_id = str(payload["site_id"])
@@ -110,9 +115,11 @@ def build_site_scan_handler(
                         "pages_capped": result.pages_capped,
                         "issues": issues,
                         "health_score": health_score(issues, result.pages),
+                        # The server checks count only when the server answered them.
+                        "checks_version": CHECKS_VERSION if result.probe is not None and result.probe.known else CHECKS_VERSION - 1,
                         # Only against a finished scan before it; the first one has nothing to compare.
                         "new_issue_count": (
-                            new_since(issue_keys_of(issues), running.previous_issues, technical_before=read_technically(site_id))
+                            new_since(issue_keys_of(issues), running.previous_issues, checks_before=checks_before(site_id))
                             if running.previous_issues is not None else None
                         ),
                     }
@@ -131,13 +138,11 @@ def build_site_scan_handler(
     return handler
 
 
-def new_since(now: list[str], before: list[str], *, technical_before: bool) -> int:
-    """What this scan found that the one before did not. A scan made before the
-    technical checks could not have found what they find: that is not new."""
+def new_since(now: list[str], before: list[str], *, checks_before: int) -> int:
+    """What this scan found that the one before did not. A scan made before a
+    check was added could not have found what it finds: that is not new."""
     fresh = set(now) - set(before)
-    if not technical_before:
-        fresh = {key for key in fresh if key.split("|", 1)[0] not in TECHNICAL_CODES}
-    return len(fresh)
+    return sum(1 for key in fresh if ADDED_IN.get(key.split("|", 1)[0], 0) <= checks_before)
 
 
 def issue_keys_of(issues) -> list[str]:

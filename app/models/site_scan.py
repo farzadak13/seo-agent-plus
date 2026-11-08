@@ -99,6 +99,9 @@ class ScannedPage(BaseModel):
     status_code: int | None = None
     # Where the address finally landed, when it redirected.
     redirected_to: str | None = None
+    # How many redirects led here, and the first one's status (301, 302...).
+    redirect_hops: int = Field(default=0, ge=0)
+    redirect_code: int | None = None
     title: str | None = None
     meta_description: str | None = None
     h1: str | None = None
@@ -134,6 +137,8 @@ class SiteScan(BaseModel):
     # More was found than one scan reads.
     pages_capped: bool = False
     issues: list[ScanIssue] = Field(default_factory=list)
+    # Which checks made it (app.scan.issues.CHECKS_VERSION); 0 for a scan from before it was kept.
+    checks_version: int = Field(default=0, ge=0)
     # 0-100 (app.scan.score); None until the scan is done, or when the site did not answer.
     health_score: int | None = Field(default=None, ge=0, le=100)
     trigger: ScanTrigger = ScanTrigger.CUSTOMER

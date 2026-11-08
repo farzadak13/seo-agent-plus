@@ -29,6 +29,7 @@ from urllib.robotparser import RobotFileParser
 from app.models.site_scan import PageMarkup, PageSpeedSignals, ScannedPage
 from app.net.guard import UnsafeAddressError, open_public, same_site
 from app.normalization.url import canonicalize_url
+from app.scan.probe import SiteProbe
 from app.scan.robots_rules import google_allows
 
 USER_AGENT = "HoshyarSEO-Scan/1.0 (+https://hoshyarseo.ir/)"
@@ -65,6 +66,8 @@ class Fetched:
     final_url: str | None = None
     content_type: str = ""
     x_robots: str = ""
+    # (status, address) of each redirect followed to get here.
+    hops: tuple[tuple[int, str], ...] = ()
 
 
 Fetcher = Callable[[str, int], Fetched]
@@ -116,6 +119,7 @@ def _read_bounded(response, limit: int, deadline: float) -> tuple[bytes, bool]:
 
 
 def _fetch_once(url: str, limit: int, *, timeout: float, deadline: float) -> Fetched:
+    hops: list[tuple[int, str]] = []
     try:
         request = Request(
             encode_url(url),
@@ -123,7 +127,7 @@ def _fetch_once(url: str, limit: int, *, timeout: float, deadline: float) -> Fet
             headers={"User-Agent": USER_AGENT, "Accept": "text/html,application/xml,text/plain,*/*"},
         )
         # same_host: a redirect off the site is the end of what is ours to read.
-        with open_public(request, timeout=timeout, same_host=True) as response:
+        with open_public(request, timeout=timeout, same_host=True, hops=hops) as response:
             body, whole = _read_bounded(response, limit, deadline)
             return Fetched(
                 status=response.status,
@@ -132,10 +136,11 @@ def _fetch_once(url: str, limit: int, *, timeout: float, deadline: float) -> Fet
                 final_url=response.geturl(),
                 content_type=response.headers.get("Content-Type", ""),
                 x_robots=response.headers.get("X-Robots-Tag", ""),
+                hops=tuple(hops),
             )
     except HTTPError as exc:
         with exc:
-            return Fetched(status=exc.code, final_url=url)
+            return Fetched(status=exc.code, final_url=url, hops=tuple(hops))
     except (URLError, UnsafeAddressError, TimeoutError, OSError, ValueError, HTTPException):
         return Fetched(status=None)
 
@@ -488,6 +493,8 @@ class CrawlResult:
     # page sits. Not kept with the scan: its issues are.
     links: dict[str, set[str]] = field(default_factory=dict)
     llms_txt: bool = False
+    # What the server says about itself (app.scan.probe); None when not asked.
+    probe: SiteProbe | None = None
 
 
 class SiteCrawler:
@@ -501,8 +508,11 @@ class SiteCrawler:
         delay_seconds: float = 0.2,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        # The site's server, asked once a scan (app.scan.probe.probe_site); off unless given.
+        prober: Callable[[str], SiteProbe] | None = None,
     ) -> None:
         self._fetch = fetcher
+        self._prober = prober
         self._max_pages = max_pages
         self._budget = time_budget_seconds
         self._delay = delay_seconds
@@ -523,6 +533,9 @@ class SiteCrawler:
 
     def crawl(self, base_url: str) -> CrawlResult:
         result = CrawlResult()
+        # The server first, outside the pages' time: a slow probe must not cost pages.
+        if self._prober is not None:
+            result.probe = self._prober(base_url)
         deadline = self._clock() + self._budget
         robots = self._read_robots(base_url, result)
         llms_url = urljoin(base_url, "/llms.txt")
@@ -695,8 +708,9 @@ class SiteCrawler:
         answer = self._fetch(url, MAX_BODY_BYTES)
         fetch_ms = max(0, int((self._clock() - started) * 1000))
         redirected = answer.final_url if answer.final_url and _identity(answer.final_url) != _identity(url) else None
+        moved = {"redirect_hops": len(answer.hops), "redirect_code": answer.hops[0][0] if answer.hops else None}
         if answer.status != 200:
-            return ScannedPage(url=url, status_code=answer.status, redirected_to=redirected, in_sitemap=in_sitemap), []
+            return ScannedPage(url=url, status_code=answer.status, redirected_to=redirected, in_sitemap=in_sitemap, **moved), []
         if answer.content_type and "html" not in answer.content_type.lower():
             return None
         if not answer.complete and len(answer.body) <= MAX_BODY_BYTES:
@@ -717,6 +731,7 @@ class SiteCrawler:
                 url=url,
                 status_code=answer.status,
                 redirected_to=redirected,
+                **moved,
                 title=_field(parser.title),
                 meta_description=_field(parser.meta_description),
                 h1=_field(parser.h1),

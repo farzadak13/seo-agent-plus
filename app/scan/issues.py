@@ -51,14 +51,26 @@ _LATIN_LETTERS = re.compile(r"[A-Za-z]")
 # nothing in what these tools show, and many sites close them on purpose.
 AI_ROBOTS = ("GPTBot", "OAI-SearchBot", "ChatGPT-User", "ClaudeBot", "PerplexityBot")
 
-# Looked for since the technical checks were added: on the first scan after them,
-# what they find is not "new" since the last scan, only newly looked for.
-TECHNICAL_CODES = frozenset({
+# Which version of the checks each code came with; a code not listed was there
+# from the start (0). On the first scan after a version, what its checks find is
+# not "new" since the last scan, only newly looked for (handler.new_since).
+CHECKS_VERSION = 3
+_PAGE_MARKUP = (
     "arabic_letters", "long_url", "soft_404", "missing_lang", "wrong_lang", "missing_rtl", "missing_viewport",
     "missing_open_graph", "images_without_alt", "mixed_content", "schema_invalid", "schema_persian_digits",
     "schema_bad_date", "no_structured_data", "duplicate_content", "internal_link_redirects", "orphan_page",
     "deep_page", "ai_robots_blocked", "no_llms_txt",
-})
+)
+# From the page fetcher: every scan since makes these.
+_REDIRECTS = ("redirect_chain", "temporary_redirect")
+# From the server probe: only a scan whose probe got an answer (handler).
+_SERVER = (
+    "ssl_invalid", "ssl_expiring", "http_not_redirected", "http_redirect_temporary", "no_hsts", "no_https",
+    "site_address_http", "www_not_redirected", "no_compression",
+)
+ADDED_IN = {**{code: 1 for code in _PAGE_MARKUP}, **{code: 2 for code in _REDIRECTS}, **{code: 3 for code in _SERVER}}
+# Days a certificate has left before the site is told to renew it.
+CERTIFICATE_DAYS = 21
 
 _ORDER = {IssueSeverity.CRITICAL: 0, IssueSeverity.WARNING: 1, IssueSeverity.INFO: 2}
 
@@ -97,6 +109,9 @@ def build_issues(result: CrawlResult) -> list[ScanIssue]:
     issues.extend(issue for issue in _duplicate_text(result.pages) if issue.url not in already)
     issues.extend(_link_issues(result))
     issues.extend(_ai_issues(result))
+    issues.extend(_server_issues(result))
+    for page in result.pages:
+        issues.extend(_redirect_issues(page))
     issues = _with_linking_page(issues, result)
     return sorted(issues, key=lambda item: (_ORDER[item.severity], item.code, item.url or ""))
 
@@ -221,6 +236,56 @@ def _ai_issues(result: CrawlResult) -> list[ScanIssue]:
     return found
 
 
+def _redirect_issues(page: ScannedPage) -> list[ScanIssue]:
+    """A page reached through several redirects, or through a temporary one."""
+    if not page.redirected_to or page.status_code != 200:
+        return []
+    found: list[ScanIssue] = []
+    if page.redirect_hops >= 2:
+        found.append(ScanIssue(
+            code="redirect_chain", severity=IssueSeverity.WARNING, url=page.url,
+            detail={"hops": page.redirect_hops, "to": page.redirected_to},
+        ))
+    if page.redirect_code in {302, 303, 307}:
+        found.append(ScanIssue(
+            code="temporary_redirect", severity=IssueSeverity.INFO, url=page.url,
+            detail={"status": page.redirect_code, "to": page.redirected_to},
+        ))
+    return found
+
+
+def _server_issues(result: CrawlResult) -> list[ScanIssue]:
+    """One site, one address, over a certificate that holds: from the server, once a scan."""
+    probe = result.probe
+    if probe is None or not probe.known or not result.pages:
+        return []
+    if result.home_status != 200:
+        # The certificate may be why the home page could not be read: say so.
+        return [ScanIssue(code="ssl_invalid", severity=IssueSeverity.CRITICAL)] if probe.certificate_invalid else []
+    found: list[ScanIssue] = []
+    secure = urlsplit(result.pages[0].redirected_to or result.pages[0].url).scheme == "https"
+    if secure:
+        if probe.certificate_invalid:
+            found.append(ScanIssue(code="ssl_invalid", severity=IssueSeverity.CRITICAL))
+        elif probe.certificate_days is not None and probe.certificate_days <= CERTIFICATE_DAYS:
+            found.append(ScanIssue(code="ssl_expiring", severity=IssueSeverity.WARNING, detail={"days": max(0, probe.certificate_days)}))
+        if probe.http_to_https is False:
+            found.append(ScanIssue(code="http_not_redirected", severity=IssueSeverity.WARNING))
+        elif probe.http_to_https and probe.http_redirect_code in {302, 303, 307}:
+            found.append(ScanIssue(code="http_redirect_temporary", severity=IssueSeverity.INFO, detail={"status": probe.http_redirect_code}))
+        if probe.hsts is False:
+            found.append(ScanIssue(code="no_hsts", severity=IssueSeverity.INFO))
+    elif probe.https_answers is True:
+        found.append(ScanIssue(code="site_address_http", severity=IssueSeverity.WARNING))
+    elif probe.https_answers is False:
+        found.append(ScanIssue(code="no_https", severity=IssueSeverity.WARNING))
+    if probe.other_host_redirects is False:
+        found.append(ScanIssue(code="www_not_redirected", severity=IssueSeverity.WARNING, detail={"host": probe.other_host}))
+    if probe.compressed is False:
+        found.append(ScanIssue(code="no_compression", severity=IssueSeverity.WARNING))
+    return found
+
+
 def _with_linking_page(issues: list[ScanIssue], result: CrawlResult) -> list[ScanIssue]:
     """A broken or moved page says which page links to it, so the link can be found and fixed."""
     sources: dict[str, str] = {}
@@ -231,7 +296,7 @@ def _with_linking_page(issues: list[ScanIssue], result: CrawlResult) -> list[Sca
                 sources[target] = by_identity[source]
     return [
         issue.model_copy(update={"detail": {**issue.detail, "from": sources[_identity(issue.url)]}})
-        if issue.code in {"broken_page", "sitemap_lists_broken_page", "internal_link_redirects"}
+        if issue.code in {"broken_page", "sitemap_lists_broken_page", "internal_link_redirects", "redirect_chain", "temporary_redirect"}
         and issue.url and _identity(issue.url) in sources
         else issue
         for issue in issues

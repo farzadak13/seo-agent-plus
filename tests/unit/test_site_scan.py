@@ -2003,8 +2003,12 @@ def test_the_first_scan_with_the_technical_checks_does_not_call_them_new():
 
     before = ["missing_title|https://x/a"]
     now = ["missing_title|https://x/a", "arabic_letters|https://x/a", "missing_title|https://x/b"]
-    assert new_since(now, before, technical_before=False) == 1
-    assert new_since(now, before, technical_before=True) == 2
+    assert new_since(now, before, checks_before=0) == 1
+    assert new_since(now, before, checks_before=1) == 2
+    # The server checks came later: after a scan with the page checks, they are not new either.
+    assert new_since(now + ["no_compression|"], before, checks_before=2) == 2
+    assert new_since(now + ["no_compression|"], before, checks_before=3) == 3
+    assert new_since(now + ["redirect_chain|https://x/d"], before, checks_before=2) == 3, "redirects are every scan's since 2"
 
 
 def test_a_clean_site_that_later_breaks_hears_it_as_new():
@@ -2024,7 +2028,255 @@ def test_a_scan_from_before_the_technical_checks_does_not_make_them_new():
     # As a scan saved before PageMarkup existed.
     world.scans.save(done.model_copy(update={
         "pages": [page.model_copy(update={"markup": None}) for page in done.pages],
-        "job_id": "job-old", "issues": [issue for issue in done.issues if issue.code != "mixed_content"],
+        "job_id": "job-old", "issues": [issue for issue in done.issues if issue.code != "mixed_content"], "checks_version": 0,
     }))
     world.now += timedelta(minutes=10)
     assert world.scan()["new_issue_count"] == 0
+
+
+
+# Technical SEO, part two: what the server says, and the redirects on the way.
+
+
+def test_a_page_reached_through_several_or_temporary_redirects_says_so():
+    hops = ((301, f"{BASE}b"), (302, f"{BASE}c"))
+    pages = {
+        "/": page_html(links=["/a"]),
+        "/a": Fetched(status=200, body=page_html(body=" ".join(f"ر{n}" for n in range(200))), final_url=f"{BASE}c",
+                      content_type="text/html", hops=hops),
+        "/c": page_html(body=" ".join(f"ر{n}" for n in range(200))),
+    }
+    world = World(FakeSite(pages))
+    issues = {(issue["code"], issue["url"]): issue for issue in world.scan()["issues"]}
+    chain = issues[("redirect_chain", f"{BASE}a")]
+    assert chain["detail"]["hops"] == 2 and chain["detail"]["from"] == BASE
+    assert ("temporary_redirect", f"{BASE}a") not in issues, "the first hop was permanent"
+    page = next(p for p in world.scans.completed("site-1").pages if p.url == f"{BASE}a")
+    assert (page.redirect_hops, page.redirect_code) == (2, 301)
+
+
+def server_codes(probe, base=BASE):
+    from app.scan.crawler import CrawlResult
+    from app.scan.issues import _server_issues
+
+    result = CrawlResult(home_status=200, pages=[ScannedPage(url=base, status_code=200)], probe=probe)
+    return {issue.code: issue for issue in _server_issues(result)}
+
+
+def test_one_site_one_address_over_a_certificate_that_holds():
+    from app.scan.probe import SiteProbe
+
+    healthy = SiteProbe(https_answers=True, http_to_https=True, http_redirect_code=301, other_host="www.shop.example",
+                        other_host_redirects=True, compressed=True, hsts=True, certificate_days=80)
+    assert server_codes(healthy) == {}
+    broken = SiteProbe(https_answers=True, http_to_https=False, other_host="www.shop.example", other_host_redirects=False,
+                       compressed=False, hsts=False, certificate_days=10)
+    found = server_codes(broken)
+    assert set(found) == {"http_not_redirected", "www_not_redirected", "no_compression", "no_hsts", "ssl_expiring"}
+    assert found["ssl_expiring"].detail == {"days": 10} and found["www_not_redirected"].detail == {"host": "www.shop.example"}
+    assert set(server_codes(SiteProbe(https_answers=True, certificate_invalid=True))) == {"ssl_invalid"}
+    assert set(server_codes(SiteProbe(https_answers=True, http_to_https=True, http_redirect_code=302))) == {"http_redirect_temporary"}
+    assert set(server_codes(SiteProbe(https_answers=False), base="http://shop.example/")) == {"no_https"}
+    assert server_codes(SiteProbe(), base="http://shop.example/") == {}, "a probe that said nothing knows nothing"
+    assert set(server_codes(SiteProbe(https_answers=True), base="http://shop.example/")) == {"site_address_http"}
+    assert server_codes(None) == {}, "not asked: nothing said"
+
+
+def test_the_crawler_asks_the_server_once_when_told_to():
+    from app.scan.crawler import SiteCrawler
+    from app.scan.probe import SiteProbe
+
+    asked = []
+    crawler = SiteCrawler(fetcher=FakeSite({"/": page_html()}), delay_seconds=0, sleep=lambda _: None,
+                          prober=lambda url: asked.append(url) or SiteProbe(compressed=False))
+    result = crawler.crawl(BASE)
+    assert asked == [BASE] and result.probe.compressed is False
+    assert SiteCrawler(fetcher=FakeSite({"/": page_html()}), delay_seconds=0, sleep=lambda _: None).crawl(BASE).probe is None
+
+
+def test_the_probe_reads_the_server_through_the_guard(monkeypatch):
+    import ssl
+
+    from app.scan import probe as probe_module
+
+    class Answer:
+        def __init__(self, status, url, headers):
+            self.status, self._url, self.headers = status, url, headers
+
+        def geturl(self):
+            return self._url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    seen = []
+
+    def fake_open(request, *, timeout, same_host, hops):
+        seen.append((request.full_url, request.get_header("Accept-encoding")))
+        if request.full_url == "http://shop.example/":
+            hops.append((302, "https://shop.example/"))
+            return Answer(200, "https://shop.example/", {})
+        if request.full_url == "https://www.shop.example/":
+            return Answer(200, "https://www.shop.example/", {"Content-Type": "text/html; charset=utf-8"})
+        return Answer(200, "https://shop.example/", {"Content-Encoding": "gzip", "Strict-Transport-Security": "max-age=1"})
+
+    expires = ssl.cert_time_to_seconds("Jan  1 00:00:00 2099 GMT")
+    monkeypatch.setattr(probe_module, "open_public", fake_open)
+    monkeypatch.setattr(probe_module, "peer_certificate", lambda host, timeout: {"notAfter": "Jan  1 00:00:00 2099 GMT"})
+    found = probe_module.probe_site("https://shop.example/")
+    assert found.https_answers and found.compressed and found.hsts
+    assert found.http_to_https and found.http_redirect_code == 302
+    assert found.other_host == "www.shop.example" and found.other_host_redirects is False
+    assert found.certificate_days > 20_000 and expires
+    assert ("https://shop.example/", "gzip, deflate, br") in seen, "compression is asked for on the home page only"
+
+    def refused(host, timeout):
+        raise ssl.SSLCertVerificationError("expired")
+
+    monkeypatch.setattr(probe_module, "peer_certificate", refused)
+    assert probe_module.probe_site("https://shop.example/").certificate_invalid
+
+
+def test_the_guard_writes_down_each_redirect(monkeypatch):
+    from urllib.request import Request
+
+    from app.net import guard
+
+    monkeypatch.setattr(guard, "ensure_public_url", lambda url: None)
+    hops = []
+    handler = guard._CheckedRedirects("https://shop.example/a", hops)
+    handler.redirect_request(Request("https://shop.example/a"), None, 301, "Moved", {}, "https://shop.example/b")
+    assert hops == [(301, "https://shop.example/b")]
+
+
+
+def test_a_site_typed_bare_that_lives_on_www_is_one_site(monkeypatch):
+    from app.scan import probe as probe_module
+
+    class Answer:
+        def __init__(self, status, url, headers=None):
+            self.status, self._url, self.headers = status, url, headers or {"Content-Type": "text/html"}
+
+        def geturl(self):
+            return self._url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    certificates = []
+
+    def fake_open(request, *, timeout, same_host, hops):
+        # Every address of the site ends on https://www.shop.example/.
+        if not request.full_url.startswith("https://www."):
+            hops.append((301, "https://www.shop.example/"))
+        return Answer(200, "https://www.shop.example/", {"Content-Type": "text/html", "Content-Encoding": "br"})
+
+    monkeypatch.setattr(probe_module, "open_public", fake_open)
+    monkeypatch.setattr(probe_module, "peer_certificate", lambda host, timeout: certificates.append(host) or {"notAfter": "Jan  1 00:00:00 2099 GMT"})
+    found = probe_module.probe_site("https://shop.example/")
+    assert found.host == "www.shop.example" and found.other_host == "shop.example"
+    assert found.other_host_redirects is True
+    assert certificates == ["www.shop.example"], "the certificate of where the site lives"
+
+
+def test_a_challenge_or_error_page_on_the_other_host_is_not_a_second_copy(monkeypatch):
+    from http.client import BadStatusLine
+
+    from app.scan import probe as probe_module
+
+    class Answer:
+        def __init__(self, status, url, headers):
+            self.status, self._url, self.headers = status, url, headers
+
+        def geturl(self):
+            return self._url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_open(request, *, timeout, same_host, hops):
+        if request.full_url.startswith("http://"):
+            raise BadStatusLine("garbage")  # caught: this one is "not known", the rest still counts
+        if "www." in request.full_url:
+            return Answer(200, request.full_url, {"Content-Type": "application/json"})
+        return Answer(200, request.full_url, {"Content-Type": "text/html", "Strict-Transport-Security": "max-age=0"})
+
+    monkeypatch.setattr(probe_module, "open_public", fake_open)
+    monkeypatch.setattr(probe_module, "peer_certificate", lambda host, timeout: {"notAfter": "Jan  1 00:00:00 2099 GMT"})
+    found = probe_module.probe_site("https://shop.example/")
+    assert found.https_answers and found.http_to_https is None
+    assert found.other_host_redirects is None and found.hsts is False
+
+
+def test_a_certificate_that_keeps_the_home_page_closed_is_said():
+    from app.scan.crawler import CrawlResult
+    from app.scan.issues import _server_issues
+    from app.scan.probe import SiteProbe
+
+    result = CrawlResult(home_status=None, pages=[ScannedPage(url=BASE)], probe=SiteProbe(certificate_invalid=True))
+    assert [issue.code for issue in _server_issues(result)] == ["ssl_invalid"]
+
+
+def test_the_probe_runs_before_the_pages_clock_starts():
+    from app.scan.crawler import SiteCrawler
+    from app.scan.probe import SiteProbe
+
+    now = [0.0]
+
+    def slow_probe(url):
+        now[0] += 100  # a slow server
+        return SiteProbe(compressed=True)
+
+    crawler = SiteCrawler(fetcher=FakeSite({"/": page_html(links=["/a"]), "/a": page_html()}), time_budget_seconds=60,
+                          delay_seconds=0, sleep=lambda _: None, clock=lambda: now[0], prober=slow_probe)
+    result = crawler.crawl(BASE)
+    assert len(result.pages) == 2 and not result.pages_capped
+
+
+
+def test_a_server_that_refuses_https_has_none_and_silence_is_not_a_no(monkeypatch):
+    import ssl
+    from urllib.error import URLError
+
+    from app.scan import probe as probe_module
+
+    class Answer:
+        status, headers = 200, {"Content-Type": "text/html"}
+
+        def __init__(self, url):
+            self._url = url
+
+        def geturl(self):
+            return self._url
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    reason = {"value": ConnectionRefusedError()}
+
+    def fake_open(request, *, timeout, same_host, hops):
+        if request.full_url.startswith("https://"):
+            raise URLError(reason["value"])
+        return Answer("http://shop.example/" if "www." not in request.full_url else request.full_url)
+
+    monkeypatch.setattr(probe_module, "open_public", fake_open)
+    monkeypatch.setattr(probe_module, "peer_certificate", lambda host, timeout: (_ for _ in ()).throw(OSError("refused")))
+    assert probe_module.probe_site("http://shop.example/").https_answers is False
+    reason["value"] = ssl.SSLError("handshake")
+    assert probe_module.probe_site("http://shop.example/").https_answers is False
+    reason["value"] = TimeoutError("timed out")
+    found = probe_module.probe_site("http://shop.example/")
+    assert found.https_answers is None and found.known, "the http answer still counts"
+    assert not probe_module.SiteProbe(host="x", other_host="www.x").known

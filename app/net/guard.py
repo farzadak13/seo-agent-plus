@@ -18,6 +18,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import socket
+import ssl
 from urllib.parse import urlparse
 from urllib.request import (
     HTTPHandler,
@@ -110,9 +111,10 @@ class _PinnedHTTPSHandler(HTTPSHandler):
 
 
 class _CheckedRedirects(HTTPRedirectHandler):
-    def __init__(self, origin: str | None) -> None:
+    def __init__(self, origin: str | None, hops: list | None = None) -> None:
         super().__init__()
         self._origin = origin
+        self._hops = hops
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         ensure_public_url(newurl)
@@ -124,20 +126,35 @@ class _CheckedRedirects(HTTPRedirectHandler):
             if urlparse(self._origin).scheme == "https" and urlparse(newurl).scheme != "https":
                 # Credentials would then travel unencrypted.
                 raise UnsafeAddressError("The site redirected from https to http; not followed.")
+        if self._hops is not None:
+            self._hops.append((code, newurl))
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def open_public(request: Request, *, timeout: float, same_host: bool = False):
+def open_public(request: Request, *, timeout: float, same_host: bool = False, hops: list | None = None):
     """urlopen to a public address only, pinned to the address that was checked.
 
     ``same_host`` also refuses a redirect that leaves the original site or
-    drops from https to http.
+    drops from https to http. ``hops``, when given, gets (status, address) for
+    each redirect followed.
     """
     ensure_public_url(request.full_url)
     origin = request.full_url if same_host else None
     # No proxy from the environment: the check is about where the request
     # really goes, and a proxy would make that the proxy's decision.
     opener = build_opener(
-        ProxyHandler({}), _PinnedHTTPHandler(), _PinnedHTTPSHandler(), _CheckedRedirects(origin)
+        ProxyHandler({}), _PinnedHTTPHandler(), _PinnedHTTPSHandler(), _CheckedRedirects(origin, hops)
     )
     return opener.open(request, timeout=timeout)
+
+
+def peer_certificate(host: str, port: int = 443, *, timeout: float) -> dict:
+    """The certificate a public host shows, verified against its name.
+
+    Raises ssl.SSLCertVerificationError for one that has run out, is for
+    another name, or is not trusted.
+    """
+    context = ssl.create_default_context()
+    raw = _connect_checked(host, port, timeout, None)
+    with context.wrap_socket(raw, server_hostname=host) as tls:
+        return tls.getpeercert()
