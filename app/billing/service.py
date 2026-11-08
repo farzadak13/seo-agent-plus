@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from app.billing.models import Payment, PaymentStatus, Subscription, SubscriptionEvent
-from app.billing.plans import PERIOD, TRIAL_LENGTH, Plan, PlanId
+from app.billing.plans import Limits, PERIOD, Plan, PlanId, TRIAL_LENGTH, UNLIMITED
 from app.billing.store import PaymentStore, SubscriptionStore
 from app.billing.zarinpal import GatewayError, ZarinpalGateway
 from app.persistence.contracts import PersistenceConflictError
@@ -86,6 +86,13 @@ class Billing:
             ends_at=subscription.ends_at,
             sites=self.plans[subscription.plan].sites,
         )
+
+    def limits(self, tenant_id: str) -> Limits:
+        plan = self.entitlement(tenant_id).plan
+        if plan is None:
+            return UNLIMITED
+        chosen = self.plans[plan]
+        return Limits(changes_a_month=chosen.changes_a_month, targets=chosen.targets, rescan_every=chosen.rescan_every)
 
     def basic_writer(self, tenant_id: str) -> bool:
         """Whether the cheaper model writes for this tenant (app.reasoning.tiers)."""

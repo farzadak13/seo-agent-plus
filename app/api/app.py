@@ -17,7 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api import oauth_pages
 from app.api.auth import APIKeyAuthenticator
-from app.api.account_routes import register_account_routes, require_plan, require_site_room
+from app.api.account_routes import register_account_routes, require_change_room, require_plan, require_site_room
 from app.api.description_routes import register_description_routes
 from app.api.scan_routes import register_scan_routes
 from app.api.target_routes import register_target_routes
@@ -1128,6 +1128,8 @@ def create_app(dependencies: APIDependencies) -> FastAPI:
             )
         except ApprovalError as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        # After the checks of the action itself: one already decided says so, not "used up".
+        require_change_room(dependencies, authenticated_principal_id)
         job = _action_job(dependencies, EXECUTE_ACTION_JOB_TYPE, approved, authenticated_principal_id)
         _save_with_job(dependencies, approved, job)
         return ActionResponse.from_managed(approved, job_id=job.job_id)

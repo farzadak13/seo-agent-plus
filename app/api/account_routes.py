@@ -8,11 +8,12 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.billing.quota import Quota, quota
 from app.accounts.otp import OtpError, OtpTooSoon
 from app.accounts.phone import normalize_mobile
 from app.accounts.service import SignInError
 from app.accounts.store import AccountExistsError
-from app.billing.plans import PlanId
+from app.billing.plans import Limits, PlanId, UNLIMITED
 from app.billing.service import PaymentUnavailable, PlanRequired
 from app.billing.zarinpal import CALLBACK_PATH
 
@@ -47,6 +48,32 @@ def require_plan(dependencies, tenant_id: str) -> None:
         dependencies.billing.require_active(tenant_id)
     except PlanRequired as exc:
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc)) from exc
+
+
+def limits_of(dependencies, tenant_id: str) -> Limits:
+    """The tenant's plan limits; without billing, as before plans existed."""
+    if dependencies.billing is None:
+        return UNLIMITED
+    return dependencies.billing.limits(tenant_id)
+
+
+def _changes(dependencies, tenant_id: str, now) -> Quota:
+    return quota(dependencies.action_store, tenant_id, limits_of(dependencies, tenant_id).changes_a_month, now)
+
+
+def _changes_answer(found: Quota) -> dict:
+    return {"used": found.used, "limit": found.limit, "frees_at": found.frees_at.isoformat() if found.frees_at else None}
+
+
+def require_change_room(dependencies, tenant_id: str) -> None:
+    """An approval is refused once the plan's changes for any 30 days are used."""
+    found = _changes(dependencies, tenant_id, dependencies.clock())
+    if found.left == 0:
+        frees = found.frees_at.date().isoformat() if found.frees_at else ""
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"This plan's changes for this month are used up; the next one frees up on {frees}.",
+        )
 
 
 def require_site_room(dependencies, tenant_id: str, sites_now: int) -> None:
@@ -182,8 +209,13 @@ def register_account_routes(
             "sites_used": sites,
             "sites_limit": entitlement.sites,
             "can_pay": service.can_take_payments,
+            "changes": _changes_answer(_changes(dependencies, authenticated_principal_id, now)),
             "plans": [
-                {"plan": plan.plan_id.value, "name": plan.name, "sites": plan.sites, "price": plan.price}
+                {
+                    "plan": plan.plan_id.value, "name": plan.name, "sites": plan.sites, "price": plan.price,
+                    "changes_a_month": plan.changes_a_month, "targets": plan.targets,
+                    "rescan_days": plan.rescan_every.days, "best_writer": not plan.basic_writer,
+                }
                 for plan in service.plans.values()
                 if plan.plan_id != PlanId.TRIAL
             ],

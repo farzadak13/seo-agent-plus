@@ -75,8 +75,8 @@ export async function inboxPage(container, { site, param, alive, refreshCount })
         selected.delete(action.action_id);
       } catch (error) {
         failed.push(messageFor(error));
-        // Signed out, or the plan does not allow it: the rest would fail the same way.
-        if (error.status === 401 || error.status === 402) break;
+        // Signed out, the plan does not allow it, or its changes are used up: the rest would fail the same way.
+        if (error.status === 401 || error.status === 402 || error.status === 429) break;
       }
     }
     busy = false;

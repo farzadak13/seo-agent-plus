@@ -364,7 +364,7 @@ def test_an_ended_trial_can_still_pay_and_starts_from_today():
     authority = checkout(world, plan="gold")
     world.client.get(f"/v1/billing/zarinpal/callback?Authority={authority}&Status=OK")
     entitlement = world.billing.entitlement(tenant_id)
-    assert entitlement.active and entitlement.sites == 3 and entitlement.ends_at == world.clock.now + PERIOD
+    assert entitlement.active and entitlement.sites == 1 and entitlement.ends_at == world.clock.now + PERIOD
 
 
 def test_without_a_gateway_payment_says_it_is_not_available():

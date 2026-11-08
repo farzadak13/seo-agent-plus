@@ -266,8 +266,11 @@ class RankTracker:
         per_round: int = 50,
         # A tenant whose subscription has ended is not looked up: each look is paid for.
         active: Callable[[str], bool] = lambda tenant_id: True,
+        # How many of a site's words its plan pays for; the first kept are looked up.
+        targets_of: Callable[[str], int | None] = lambda tenant_id: None,
     ) -> None:
         self._active = active
+        self._targets_of = targets_of
         self._targets = target_store
         self._sites = site_store
         self._serp = serp_provider
@@ -286,11 +289,11 @@ class RankTracker:
                 continue
             if _is_removed(site) or not self._active(keywords.tenant_id):
                 continue
-            due = [
-                item
-                for item in keywords.keywords
-                if item.status == KeywordStatus.CONFIRMED and (not item.checks or now - item.checks[-1].checked_at >= RANK_EVERY)
-            ]
+            kept = [item for item in keywords.keywords if item.status == KeywordStatus.CONFIRMED]
+            room = self._targets_of(keywords.tenant_id)
+            if room is not None:
+                kept = kept[:room]  # a smaller plan than the words were kept under
+            due = [item for item in kept if not item.checks or now - item.checks[-1].checked_at >= RANK_EVERY]
             if not due:
                 continue
             found: dict[str, RankCheck] = {}

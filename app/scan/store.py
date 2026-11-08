@@ -62,7 +62,7 @@ class SiteScanStore(_Latest):
 
     def save(self, scan: SiteScan) -> SiteScan:
         # The fields only answers carry are never kept.
-        payload = scan.model_dump(mode="json", exclude={"last_attempt_error", "monthly_rescan"})
+        payload = scan.model_dump(mode="json", exclude={"last_attempt_error", "monthly_rescan", "next_scan_at"})
         completed_store = _Latest(self._repository, COMPLETED_SCAN_AGGREGATE_TYPE)
         # A site scanned before there was a record of the last finished scan:
         # the finished scan about to be written over is kept first.

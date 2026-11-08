@@ -93,6 +93,7 @@ class MonthlyRescan:
         active: Callable[[str], bool] = lambda tenant_id: True,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         per_round: int = PER_ROUND,
+        every: Callable[[str], timedelta] = lambda tenant_id: RESCAN_EVERY,
     ) -> None:
         self._sites = site_store
         self._scans = scan_store
@@ -102,6 +103,7 @@ class MonthlyRescan:
         self._active = active
         self._clock = clock
         self._per_round = per_round
+        self._every = every
 
     def due(self, site, now: datetime) -> datetime | None:
         """When the site's last finished scan was, if it is time for another; else None."""
@@ -119,7 +121,7 @@ class MonthlyRescan:
                 return None
             return done.completed_at or done.requested_at
         last = done.completed_at or done.requested_at
-        return last if now - last >= RESCAN_EVERY else None
+        return last if now - last >= self._every(site.principal_id) else None
 
     def run_round(self) -> dict[str, int]:
         now = self._clock()

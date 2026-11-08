@@ -105,8 +105,9 @@ function lineOrNothing(parts) {
   return text ? h("p", { class: "small muted", text }) : null;
 }
 
-// A month after the last one (app.scan.monthly.RESCAN_EVERY).
+// As the server says (by the plan); a month after the last one if it does not.
 function nextScan(scan) {
+  if (scan.next_scan_at) return new Date(scan.next_scan_at);
   const next = new Date(scan.completed_at || scan.requested_at);
   next.setDate(next.getDate() + 30);
   return next;
@@ -330,11 +331,11 @@ export async function scanPage(container, { site, alive }) {
           : null,
         scan.last_attempt_error
           ? h("div", { class: "notice notice-warn", text: scan.last_attempt_error === "site_unreachable"
-              ? "بررسی خودکار ماهانه نتوانست سایت را باز کند. اگر سایت در دسترس است، خودتان «بررسی دوباره» را بزنید؛ وگرنه چند روز بعد دوباره امتحان می‌کنیم."
-              : "بررسی خودکار ماهانه کامل نشد. نتیجهٔ زیر از بررسی قبلی است؛ چند روز بعد دوباره امتحان می‌کنیم." })
+              ? "بررسی خودکار نتوانست سایت را باز کند. اگر سایت در دسترس است، خودتان «بررسی دوباره» را بزنید؛ وگرنه چند روز بعد دوباره امتحان می‌کنیم."
+              : "بررسی خودکار کامل نشد. نتیجهٔ زیر از بررسی قبلی است؛ چند روز بعد دوباره امتحان می‌کنیم." })
           : null,
         lineOrNothing([
-          scan.trigger === "monthly" ? "این بررسی خودکار ماهانه بود." : "",
+          scan.trigger === "monthly" ? "این بررسی خودکار بود." : "",
           // No promise while the subscription has lapsed: no automatic scan comes then.
           scan.monthly_rescan === false ? ""
             : nextScan(scan) > new Date() ? `بررسی خودکار بعدی حدود ${fmt.localDay(nextScan(scan))} است.`

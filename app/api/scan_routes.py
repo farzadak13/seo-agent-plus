@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Response, status
 
-from app.api.account_routes import require_plan
+from app.api.account_routes import limits_of, require_plan
 from app.models.jobs import Job
 from app.models.site_files import SiteFileChange, SiteFileKind, SiteFileStatus
 from app.models.site_scan import ScanStatus, ScanTrigger, SiteScan
@@ -96,7 +96,12 @@ def register_scan_routes(app: FastAPI, dependencies, *, principal_id: Callable, 
             rescanned = billing is None or billing.entitlement(site.principal_id).active
         except Exception:  # one line of the page is not worth the page
             rescanned = None
-        return scan.model_copy(update={"monthly_rescan": rescanned})
+        try:
+            every = limits_of(dependencies, site.principal_id).rescan_every if rescanned else None
+        except Exception:  # as above
+            every = None
+        last = scan.completed_at or scan.requested_at
+        return scan.model_copy(update={"monthly_rescan": rescanned, "next_scan_at": last + every if every else None})
 
     @app.get("/v1/sites/{site_id}/site-files", response_model=list[SiteFileChange])
     def site_files(site_id: str, authenticated_principal_id: str = Depends(principal_id)) -> list[SiteFileChange]:

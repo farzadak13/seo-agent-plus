@@ -1774,3 +1774,34 @@ def test_a_lapsed_subscription_is_not_promised_a_monthly_scan():
 
     world.client.app.state.dependencies.billing = Lapsed()
     assert world.client.get("/v1/sites/site-1/scans/latest").json()["monthly_rescan"] is False
+
+
+
+def test_a_plan_scanned_weekly_is_scanned_a_week_after_its_last_scan_and_told_when():
+    from types import SimpleNamespace
+
+    from app.billing.plans import UNLIMITED
+
+    world = World(new_site())
+    world.scan()
+
+    class Weekly:
+        def limits(self, tenant_id):
+            return UNLIMITED.__class__(changes_a_month=None, targets=50, rescan_every=timedelta(days=7))
+
+        def entitlement(self, tenant_id):
+            return SimpleNamespace(active=True)
+
+        def require_active(self, tenant_id):
+            return SimpleNamespace(active=True)
+
+    world.client.app.state.dependencies.billing = Weekly()
+    shown = world.client.get("/v1/sites/site-1/scans/latest").json()
+    completed = datetime.fromisoformat(shown["completed_at"])
+    assert datetime.fromisoformat(shown["next_scan_at"]) == completed + timedelta(days=7)
+
+    weekly = monthly(world, every=lambda tenant_id: timedelta(days=7))
+    world.now = completed + timedelta(days=7) - timedelta(minutes=1)
+    assert weekly.run_round()["queued"] == 0
+    world.now += timedelta(minutes=2)
+    assert weekly.run_round()["queued"] == 1

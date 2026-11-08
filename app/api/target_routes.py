@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.account_routes import require_plan
+from app.api.account_routes import limits_of, require_plan
 from app.api.schemas import RunResponse
 from app.models.jobs import Job
 from app.models.runs import SEORun, SEORunStatus
@@ -35,7 +35,8 @@ TITLE_COOLDOWN = timedelta(minutes=30)
 TITLE_STALE_AFTER = timedelta(minutes=15)
 TITLES_PER_TENANT_PER_DAY = 20
 KEPT_REQUESTS = 50
-# Each confirmed word costs one Google search a week.
+# Each confirmed word costs one Google search a week; how many a site may keep
+# is the plan's (Plan.targets). MAX_CONFIRMED is the cap without a plan.
 MAX_CONFIRMED = 20
 
 Seed = Annotated[str, Field(max_length=80)]
@@ -195,7 +196,7 @@ def register_target_routes(app: FastAPI, dependencies, *, principal_id: Callable
             raise HTTPException(status_code=422, detail="That page is not one the scan read on this site.")
         keywords, version = targets().read_or_new(site)
         existing = next((item for item in keywords.keywords if item.keyword == word), None)
-        if (existing is None or existing.status != KeywordStatus.CONFIRMED) and confirmed_count(keywords) >= MAX_CONFIRMED:
+        if (existing is None or existing.status != KeywordStatus.CONFIRMED) and confirmed_count(keywords) >= limits_of(dependencies, site.principal_id).targets:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This site already has the most target keywords it can have.")
         if existing is not None:
             # Its history stays: where the site stood for this word is still true.
@@ -210,7 +211,7 @@ def register_target_routes(app: FastAPI, dependencies, *, principal_id: Callable
         site = owned_site(site_id, authenticated_principal_id)
         keywords, version = targets().read_or_new(site)
         item = find_keyword(keywords, request.keyword)
-        if request.status == KeywordStatus.CONFIRMED and item.status != KeywordStatus.CONFIRMED and confirmed_count(keywords) >= MAX_CONFIRMED:
+        if request.status == KeywordStatus.CONFIRMED and item.status != KeywordStatus.CONFIRMED and confirmed_count(keywords) >= limits_of(dependencies, site.principal_id).targets:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This site already has the most target keywords it can have.")
         updated = [entry.model_copy(update={"status": request.status}) if entry.keyword == item.keyword else entry for entry in keywords.keywords]
         return save(keywords.model_copy(update={"keywords": updated}), version)

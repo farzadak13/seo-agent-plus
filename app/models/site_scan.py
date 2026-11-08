@@ -120,6 +120,8 @@ class SiteScan(BaseModel):
     # Only in answers: whether this site is scanned again on its own (not while
     # the subscription has lapsed), so the page promises no scan that won't come.
     monthly_rescan: bool | None = None
+    # Only in answers: about when the next automatic scan comes (by the plan).
+    next_scan_at: datetime | None = None
     # What the scan before found ("code|url"), and how much of this one is not in it.
     # None: there was no finished scan before, so nothing is "new".
     previous_issues: list[str] | None = None

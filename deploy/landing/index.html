@@ -128,6 +128,18 @@
   .card h3 { margin: 0 0 8px; font-size: 17px; font-weight: 800; }
   .card p { margin: 0; color: var(--muted); font-size: 15px; }
 
+  .plans { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; align-items: stretch; }
+  .plan { background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 26px; display: flex; flex-direction: column; }
+  .plan.gold { border: 2px solid var(--gold); background: linear-gradient(180deg, var(--gold-soft), var(--bg) 40%); }
+  .plan h3 { margin: 0; font-size: 20px; font-weight: 800; }
+  .plan .for { color: var(--muted); font-size: 14.5px; margin: 2px 0 14px; }
+  .plan .price { font-size: 28px; font-weight: 800; margin-bottom: 14px; }
+  .plan .price small { font-size: 14px; font-weight: 500; color: var(--muted); }
+  .plan ul { margin: 0; padding: 0 18px 0 0; color: var(--ink); font-size: 15px; }
+  .plan li { margin-bottom: 6px; }
+  .plan li .soon { margin: 0 6px 0 0; vertical-align: 1px; }
+  .plans-note { color: var(--muted); font-size: 14px; margin-top: 16px; }
+
   .soon { display: inline-block; font-size: 12px; font-weight: 700; color: var(--gold-dark); background: var(--gold-soft); border-radius: 20px; padding: 0 10px; margin-bottom: 8px; }
 
   .note {
@@ -153,6 +165,9 @@
     .steps { grid-template-columns: repeat(2, 1fr); }
     .grid { grid-template-columns: repeat(2, 1fr); }
   }
+  @media (max-width: 760px) {
+    .plans { grid-template-columns: 1fr; }
+  }
   @media (max-width: 600px) {
     .wrap { padding: 0 16px; }
     .steps, .grid { grid-template-columns: 1fr; }
@@ -171,6 +186,7 @@
     <nav aria-label="منوی اصلی">
       <a class="plain" href="#how">چطور کار می‌کند</a>
       <a class="plain" href="#features">قابلیت‌ها</a>
+      <a class="plain" href="#plans">اشتراک‌ها</a>
       <a class="signin" href="/app/">ورود به حساب</a>
     </nav>
   </header>
@@ -198,8 +214,8 @@
       <div class="row-label">عنوان فعلی</div>
       <div class="old">کفش مردانه | فروشگاه نمونه</div>
       <div class="row-label">یکی را انتخاب کنید:</div>
-      <div class="choice on">خرید کفش مردانه اصل با ارسال رایگان</div>
-      <div class="choice">کفش مردانه چرم و اسپرت، با ضمانت اصالت</div>
+      <div class="choice on">خرید کفش مردانه چرم و اسپرت | فروشگاه نمونه</div>
+      <div class="choice">کفش مردانه؛ مدل‌های رسمی، اسپرت و روزمره</div>
       <div class="demo-actions">
         <span class="fake fake-gold">تأیید و اعمال</span>
         <span class="fake fake-line">رد کردن</span>
@@ -239,19 +255,51 @@
         <article class="card"><h3>اعمال خودکار در وردپرس</h3><p>با افزونهٔ هوشیار سئو، عنوانی که تأیید کرده‌اید خودکار روی سایت قرار می‌گیرد. این افزونه با Yoast و Rank Math و افزونه‌های مشابه هم مشکلی ندارد.</p></article>
         <article class="card"><h3>سایت‌های غیر وردپرسی</h3><p>اگر سایتتان اختصاصی است یا با پلتفرم دیگری ساخته شده، عنوان را خودتان می‌گذارید و ما روی صفحه چک می‌کنیم که درست اعمال شده باشد.</p></article>
         <article class="card"><h3>برگرداندن تغییر و دیدن نتیجه</h3><p>هر تغییری را می‌توانید برگردانید. نتیجه هم شفاف گزارش می‌شود: موفق، ناموفق یا نامشخص.</p></article>
+        <article class="card"><h3>بررسی فنی سایت</h3><p>فقط با داشتن آدرس سایت، مشکل‌های فنی را پیدا می‌کنیم، به سایت امتیاز سلامت می‌دهیم و نقشهٔ سایت و <span class="en">robots.txt</span> را می‌سازیم یا بهتر می‌کنیم.</p></article>
+        <article class="card"><h3>شروع برای سایت‌های تازه</h3><p>سایتی که هنوز داده‌ای در سرچ کنسول ندارد هم شروع می‌کند: کلمه‌های هدف را با هم انتخاب می‌کنیم و رتبهٔ هر کدام را هر هفته پیگیری می‌کنیم.</p></article>
+        <article class="card"><h3>بدون وعده‌های ساختگی</h3><p>عنوان و توضیحاتی که وعده‌ای بدهد که صفحهٔ شما نداده، مثل تخفیف یا ارسال رایگان، اصلاً به شما پیشنهاد نمی‌شود.</p></article>
       </div>
     </div>
   </section>
 
-  <section>
+  <section id="plans">
     <div class="wrap">
-      <h2>به‌زودی اضافه می‌شود</h2>
-      <p class="sub">این قابلیت‌ها هنوز منتشر نشده‌اند و روی آن‌ها کار می‌کنیم.</p>
-      <div class="grid">
-        <article class="card"><span class="soon">به‌زودی</span><h3>بررسی فنی سایت</h3><p>فقط با داشتن آدرس سایت، مشکل‌های فنی را پیدا می‌کنیم و نقشهٔ سایت و <span class="en">robots.txt</span> را می‌سازیم یا بهتر می‌کنیم.</p></article>
-        <article class="card"><span class="soon">به‌زودی</span><h3>شروع برای سایت‌های تازه</h3><p>اگر سایتتان تازه راه افتاده و هنوز داده‌ای در سرچ کنسول ندارد هم می‌توانید شروع کنید. کلمات هدف را با هم انتخاب می‌کنیم و ایندکس شدن صفحه‌ها را پیگیری می‌کنیم.</p></article>
-        <article class="card"><span class="soon">در برنامه</span><h3>بسته‌های تخصصی</h3><p>بستهٔ سئوی تکنیکال و بستهٔ افزایش سرعت و <span class="en">Core Web Vitals</span>، برای وقتی که فقط همان کار را لازم دارید.</p></article>
+      <h2>اشتراک‌ها</h2>
+      <p class="sub">سئو کار یک‌باره نیست: هر ماه بخشی از کارها انجام می‌شود، سایت دوباره بررسی می‌شود و رتبه‌ها پیگیری می‌شوند. هر حساب تازه هفت روز رایگان با امکانات اشتراک پایه دارد.</p>
+      <div class="plans">
+        <article class="plan">
+          <h3>پایه</h3>
+          <p class="for">برای یک سایت کوچک یا فروشگاه تازه‌کار</p>
+          <div class="price">۸۹۰٬۰۰۰ <small>تومان در ماه</small></div>
+          <ul>
+            <li>یک سایت</li>
+            <li>عنوان و توضیحات متا با هوش مصنوعی</li>
+            <li>۲۰ تغییر سئو در ماه، با تأیید شما</li>
+            <li>تا ۱۰ کلمهٔ هدف، با رتبهٔ هفتگی</li>
+            <li>بررسی خودکار سایت هر ماه</li>
+            <li>گزارش ماهانه با ایمیل <span class="soon">به‌زودی</span></li>
+            <li>بسته‌های سرعت و سئوی تکنیکال، جداگانه <span class="soon">به‌زودی</span></li>
+          </ul>
+        </article>
+        <article class="plan gold">
+          <h3>طلایی</h3>
+          <p class="for">برای کسب‌وکاری که سئو برایش جدی است</p>
+          <div class="price">۳٬۵۰۰٬۰۰۰ <small>تومان در ماه</small></div>
+          <ul>
+            <li>یک سایت</li>
+            <li>عنوان و توضیحات با قوی‌ترین مدل هوش مصنوعی</li>
+            <li>۱۰۰ تغییر سئو در ماه، با تأیید شما</li>
+            <li>تا ۵۰ کلمهٔ هدف، با رتبهٔ هفتگی</li>
+            <li>بررسی خودکار سایت هر هفته</li>
+            <li>رتبهٔ رقیب‌ها کنار رتبهٔ شما <span class="soon">به‌زودی</span></li>
+            <li>بسته‌های سرعت و سئوی تکنیکال، داخل اشتراک <span class="soon">به‌زودی</span></li>
+            <li>دیده‌شدن در جواب‌های هوش مصنوعی <span class="soon">به‌زودی</span></li>
+            <li>گزارش هفتگی با ایمیل <span class="soon">به‌زودی</span></li>
+            <li>پشتیبانی اولویت‌دار و یک جلسهٔ راه‌اندازی</li>
+          </ul>
+        </article>
       </div>
+      <p class="plans-note">قابلیت‌های «به‌زودی» بدون هزینهٔ اضافه به اشتراک شما اضافه می‌شوند، به‌جز بسته‌هایی که در اشتراک پایه جداگانه فروخته می‌شوند. هر اشتراک برای یک سایت است؛ اگر چند سایت دارید، با ما تماس بگیرید.</p>
     </div>
   </section>
 

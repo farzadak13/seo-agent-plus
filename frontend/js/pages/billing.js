@@ -17,6 +17,25 @@ function buttonText(state, plan) {
   return "خرید یک ماه";
 }
 
+// What a plan gives, from what the server says it allows.
+function features(plan) {
+  return [
+    plan.sites === 1 ? "یک سایت" : `تا ${fmt.int(plan.sites)} سایت`,
+    plan.best_writer ? "عنوان و توضیحات با قوی‌ترین مدل هوش مصنوعی" : "عنوان و توضیحات با هوش مصنوعی",
+    `${fmt.int(plan.changes_a_month)} تغییر سئو در ماه، با تأیید شما`,
+    `تا ${fmt.int(plan.targets)} کلمهٔ هدف، با رتبهٔ هفتگی`,
+    plan.rescan_days <= 7 ? "بررسی خودکار سایت هر هفته" : "بررسی خودکار سایت هر ماه",
+    "robots.txt و نقشهٔ سایت",
+  ];
+}
+
+// How much of the plan's changes this 30 days have used, and when one frees up.
+function changesText(changes) {
+  if (!changes || changes.limit === null) return "";
+  const used = `تغییرهای سئوی ۳۰ روز اخیر: ${fmt.int(changes.used)} از ${fmt.int(changes.limit)}`;
+  return changes.frees_at ? `${used}. تغییر بعدی از ${fmt.localDay(new Date(changes.frees_at))} آزاد می‌شود.` : `${used}.`;
+}
+
 function statusText(state) {
   if (!state.plan) return "حساب شما محدودیت پلن ندارد.";
   if (!state.active) return "اشتراک شما تمام شده است. اطلاعات و تغییرهای قبلی سر جایشان هستند؛ برای انجام کارهای جدید، اشتراک را تمدید کنید.";
@@ -67,18 +86,14 @@ export async function billingPage(container, { param, alive }) {
       state.plans.map((plan) => h("article", { class: `plan-card${state.plan === plan.plan ? " plan-current" : ""}` },
         h("div", { class: "plan-name", text: plan.name }),
         h("div", { class: "plan-price" }, toman(plan.price), h("span", { class: "small muted", text: " / ماه" })),
-        h("ul", { class: "plan-features" },
-          h("li", { text: plan.sites === 1 ? "یک سایت" : `تا ${fmt.int(plan.sites)} سایت` }),
-          h("li", { text: "بررسی سایت، robots.txt و نقشهٔ سایت" }),
-          h("li", { text: "پیشنهاد و اعمال عنوان با تأیید شما" }),
-          h("li", { text: "کلمه‌های هدف و رتبهٔ هفتگی" }),
-        ),
+        h("ul", { class: "plan-features" }, features(plan).map((text) => h("li", { text }))),
         state.plan ? pay(plan) : "",
       )),
     ),
     state.sites_limit
       ? h("p", { class: "small muted", text: `سایت‌های این حساب: ${fmt.int(state.sites_used)} از ${fmt.int(state.sites_limit)}` })
       : "",
+    changesText(state.changes) ? h("p", { class: "small muted", text: changesText(state.changes) }) : "",
     state.payments.length
       ? h("section", { class: "card-panel" },
           h("div", { class: "panel-title", text: "پرداخت‌ها" }),

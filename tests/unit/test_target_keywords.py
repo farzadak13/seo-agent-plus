@@ -265,6 +265,44 @@ def test_the_kept_words_have_a_ceiling():
     world.call("POST", expect=409, keyword="یکی بیشتر")
 
 
+def test_the_ceiling_is_the_plans():
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from app.billing.plans import UNLIMITED
+
+    class Gold:
+        def limits(self, tenant_id):
+            return replace(UNLIMITED, targets=MAX_CONFIRMED + 5)
+
+        def require_active(self, tenant_id):
+            return SimpleNamespace(active=True)
+
+    world = World()
+    world.client.app.state.dependencies.billing = Gold()
+    world.scan()
+    for number in range(MAX_CONFIRMED + 5):
+        world.call("POST", expect=201, keyword=f"کفش {number}")
+    world.call("POST", expect=409, keyword="یکی بیشتر")
+
+
+def test_after_a_smaller_plan_only_the_words_it_pays_for_are_looked_up():
+    from app.targets.handler import RankTracker
+
+    world = World()
+    world.scan()
+    for number in range(5):
+        world.call("POST", expect=201, keyword=f"کفش {number}")
+    tracker = RankTracker(
+        target_store=world.targets, site_store=world.sites, serp_provider=world.serp,
+        clock=lambda: world.now, targets_of=lambda tenant_id: 2,
+    )
+    tracker.run_round()
+    kept = world.client.get("/v1/sites/site-1/target-keywords").json()["keywords"]
+    looked_up = [item["keyword"] for item in kept if item.get("checks")]
+    assert looked_up == ["کفش 0", "کفش 1"]
+
+
 def test_another_customer_sees_none_of_it():
     world = World()
     world.sites.create(Site(site_id="site-2", principal_id="principal-2", name="n", base_url="https://other.example/"))
