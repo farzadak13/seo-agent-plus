@@ -11,7 +11,7 @@ from app.runtime.serp import build_serp_provider
 from app.title.workflow import TitleProposalStore, TitleRecommendationWorkflow
 
 
-def build_title_workflow(config, *, repository, adapter_factory, secret_resolver):
+def build_title_workflow(config, *, repository, adapter_factory, secret_resolver, billing=None):
     """Build the title workflow, or return None when it is explicitly disabled.
 
     When ``title_workflow_enabled`` is true, every missing collaborator raises
@@ -26,6 +26,6 @@ def build_title_workflow(config, *, repository, adapter_factory, secret_resolver
         serp_provider=build_serp_provider(
             config, repository=repository, secret_resolver=secret_resolver
         ),
-        reasoning_router=build_reasoning_router(config, secret_resolver=secret_resolver),
+        reasoning_router=build_reasoning_router(config, secret_resolver=secret_resolver, billing=billing),
         proposal_store=TitleProposalStore(repository),
     )

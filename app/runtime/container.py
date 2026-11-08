@@ -63,7 +63,7 @@ from app.runtime.properties import build_property_lister
 from app.runtime.service import PersistentSEORunService
 from app.runtime.adapters import SiteAdapterFactory
 from app.runtime.billing import build_billing, build_otp
-from app.runtime.reasoning import build_arvan_transport
+from app.runtime.reasoning import build_llm_transport
 from app.runtime.serp import build_serp_provider
 from app.runtime.title import build_title_workflow
 from app.title.workflow import TitleProposalStore
@@ -253,11 +253,14 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     # Stage 36: the title path is wired here or not at all. An enabled workflow
     # that cannot be built must fail startup rather than let runs report success
     # while silently producing no proposal.
+    # Before the title path: which model writes depends on the tenant's plan.
+    billing = build_billing(config, repository=repository, secret_resolver=secret_resolver)
     title_workflow = build_title_workflow(
         config,
         repository=repository,
         adapter_factory=adapters,
         secret_resolver=secret_resolver,
+        billing=billing,
     )
 
     handlers = JobHandlerRegistry()
@@ -298,7 +301,6 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
     # A site with no Search Console data is steered by the words its owner
     # keeps. It asks the same model and the same Google results as the title
     # path, so it is there exactly when that path is.
-    billing = build_billing(config, repository=repository, secret_resolver=secret_resolver)
     otp = build_otp(config, repository=repository, secret_resolver=secret_resolver)
     target_store = None
     rank_loop = None
@@ -310,7 +312,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
                 site_store=site_store,
                 scan_store=scan_store,
                 target_store=target_store,
-                suggester=KeywordSuggester(transport=build_arvan_transport(config, secret_resolver=secret_resolver)),
+                suggester=KeywordSuggester(transport=build_llm_transport(config, secret_resolver=secret_resolver, billing=billing)),
             ),
         )
         handlers.register(
@@ -326,7 +328,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
                 scan_store=scan_store,
                 action_store=action_store,
                 target_store=target_store,
-                writer=DescriptionWriter(transport=build_arvan_transport(config, secret_resolver=secret_resolver)),
+                writer=DescriptionWriter(transport=build_llm_transport(config, secret_resolver=secret_resolver, billing=billing)),
             ),
         )
         rank_loop = WarehouseLoop(

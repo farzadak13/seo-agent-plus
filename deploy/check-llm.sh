@@ -26,4 +26,10 @@ source "$ENV_FILE"
 set +a
 
 cd "$SRC"
-exec "${VENV}/bin/python" scripts/probe_llm.py
+"${VENV}/bin/python" scripts/probe_llm.py
+# The basic plan's texts are written by another model, if one is set: it must answer too.
+if [[ -n "${SEO_AGENT_ARVAN_BASIC_MODEL:-}" ]]; then
+  echo
+  echo "=== the basic plan's model ==="
+  SEO_AGENT_ARVAN_MODEL="$SEO_AGENT_ARVAN_BASIC_MODEL" "${VENV}/bin/python" scripts/probe_llm.py
+fi

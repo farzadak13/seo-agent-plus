@@ -289,7 +289,7 @@ def test_a_tenant_set_up_by_hand_has_no_limits():
 # ---- paying ---------------------------------------------------------------------------
 
 
-def checkout(world, plan="starter"):
+def checkout(world, plan="basic"):
     url = world.post("/v1/billing/checkout", {"plan": plan}, 200).json()["url"]
     assert url.startswith("https://payment.zarinpal.com/pg/StartPay/")
     return url.rsplit("/", 1)[1]
@@ -302,16 +302,16 @@ def test_a_payment_adds_a_month_after_the_time_left():
 
     request_url, sent = world.zarinpal.calls[0]
     assert request_url.endswith("/pg/v4/payment/request.json")
-    assert sent["amount"] == DEFAULT_PRICES[PlanId.STARTER] * 10 and sent["currency"] == "IRR"
+    assert sent["amount"] == DEFAULT_PRICES[PlanId.BASIC] * 10 and sent["currency"] == "IRR"
     assert sent["metadata"]["mobile"] == MOBILE
 
     back = world.client.get(f"/v1/billing/zarinpal/callback?Authority={authority}&Status=OK")
     assert back.status_code == 303 and back.headers["location"] == "/app/#/billing?payment=paid"
     _, verify = world.zarinpal.calls[1]
-    assert verify == {"merchant_id": MERCHANT, "amount": DEFAULT_PRICES[PlanId.STARTER] * 10, "authority": authority}
+    assert verify == {"merchant_id": MERCHANT, "amount": DEFAULT_PRICES[PlanId.BASIC] * 10, "authority": authority}
 
     entitlement = world.billing.entitlement(tenant_id)
-    assert entitlement.plan == PlanId.STARTER and entitlement.ends_at == NOW + TRIAL_LENGTH + PERIOD
+    assert entitlement.plan == PlanId.BASIC and entitlement.ends_at == NOW + TRIAL_LENGTH + PERIOD
     payments = world.client.get("/v1/billing").json()["payments"]
     assert payments[0]["status"] == "paid" and payments[0]["ref_id"] == "201"
 
@@ -345,7 +345,7 @@ def test_a_verify_that_could_not_be_made_stays_pending_and_is_asked_again():
     assert world.client.get(f"/v1/billing/zarinpal/callback?Authority={authority}&Status=OK").headers["location"].endswith("payment=pending")
     world.zarinpal.down = False
     assert world.client.get(f"/v1/billing/zarinpal/callback?Authority={authority}&Status=OK").headers["location"].endswith("payment=paid")
-    assert world.billing.entitlement(tenant_id).plan == PlanId.STARTER
+    assert world.billing.entitlement(tenant_id).plan == PlanId.BASIC
 
 
 def test_a_return_with_someone_elses_or_no_authority_changes_nothing():
@@ -361,7 +361,7 @@ def test_an_ended_trial_can_still_pay_and_starts_from_today():
     tenant_id = world.sign_up()["tenant_id"]
     world.clock.now += TRIAL_LENGTH + timedelta(days=3)
     world.sign_in_again()
-    authority = checkout(world, plan="growth")
+    authority = checkout(world, plan="gold")
     world.client.get(f"/v1/billing/zarinpal/callback?Authority={authority}&Status=OK")
     entitlement = world.billing.entitlement(tenant_id)
     assert entitlement.active and entitlement.sites == 3 and entitlement.ends_at == world.clock.now + PERIOD
@@ -371,7 +371,7 @@ def test_without_a_gateway_payment_says_it_is_not_available():
     world = World(gateway=False)
     world.sign_up()
     assert world.client.get("/v1/billing").json()["can_pay"] is False
-    world.post("/v1/billing/checkout", {"plan": "starter"}, 503)
+    world.post("/v1/billing/checkout", {"plan": "basic"}, 503)
 
 
 def test_the_trial_is_not_for_sale():
@@ -393,9 +393,9 @@ def test_a_payment_record_holds_no_more_than_the_gateway_masked():
 
 
 def test_prices_are_a_setting_and_a_bad_one_stops_startup():
-    assert parse_prices("starter=500000, pro=3000000")[PlanId.PRO] == 3_000_000
+    assert parse_prices("basic=500000, gold=3000000")[PlanId.GOLD] == 3_000_000
     with pytest.raises(ValueError):
-        parse_prices("starter=10")
+        parse_prices("basic=10")
     with pytest.raises(ValueError):
         parse_prices("trial=1000")
 
@@ -460,7 +460,7 @@ def test_a_verify_lost_on_the_way_is_settled_on_the_next_look_at_the_billing_pag
 
     state = world.client.get("/v1/billing").json()
 
-    assert state["plan"] == "starter" and state["payments"][0]["status"] == "paid"
+    assert state["plan"] == "basic" and state["payments"][0]["status"] == "paid"
     assert world.billing.entitlement(tenant_id).ends_at == NOW + TRIAL_LENGTH + PERIOD
 
 
@@ -472,7 +472,7 @@ def test_a_payment_nobody_came_back_from_is_settled_by_the_gateway_answer():
     assert len(world.zarinpal.calls) == 1, "still under way: not asked yet"
 
     world.clock.now += timedelta(minutes=21)
-    assert world.client.get("/v1/billing").json()["plan"] == "starter"
+    assert world.client.get("/v1/billing").json()["plan"] == "basic"
     assert world.billing.entitlement(tenant_id).ends_at == world.clock.now + (NOW + TRIAL_LENGTH - world.clock.now) + PERIOD
 
     second = World()
@@ -488,19 +488,19 @@ def test_another_plan_takes_the_time_left_at_what_it_was_worth():
     tenant_id = world.sign_up()["tenant_id"]
     world.clock.now += TRIAL_LENGTH + timedelta(days=1)
     world.sign_in_again()
-    authority = checkout(world, plan="starter")
+    authority = checkout(world, plan="basic")
     world.client.get(f"/v1/billing/zarinpal/callback?Authority={authority}&Status=OK")
     paid_at = world.clock.now
-    world.clock.now += timedelta(days=10)  # 20 days of starter left
+    world.clock.now += timedelta(days=10)  # 20 days of basic left
     world.sign_in_again()
 
-    authority = checkout(world, plan="pro")
+    authority = checkout(world, plan="gold")
     world.client.get(f"/v1/billing/zarinpal/callback?Authority={authority}&Status=OK")
 
     left = paid_at + PERIOD - world.clock.now
-    worth = left * DEFAULT_PRICES[PlanId.STARTER] / DEFAULT_PRICES[PlanId.PRO]
+    worth = left * DEFAULT_PRICES[PlanId.BASIC] / DEFAULT_PRICES[PlanId.GOLD]
     entitlement = world.billing.entitlement(tenant_id)
-    assert entitlement.plan == PlanId.PRO
+    assert entitlement.plan == PlanId.GOLD
     assert entitlement.ends_at == world.clock.now + worth + PERIOD
 
 
@@ -510,7 +510,7 @@ def test_an_account_set_up_by_hand_has_nothing_to_buy():
     from app.billing.service import PaymentUnavailable
 
     with pytest.raises(PaymentUnavailable):
-        world.billing.checkout("t-operator", PlanId.STARTER)
+        world.billing.checkout("t-operator", PlanId.BASIC)
     assert world.zarinpal.calls == []
 
 
@@ -551,8 +551,8 @@ def test_an_unexpected_gateway_refusal_keeps_the_payment_open():
     assert back.headers["location"].endswith("payment=pending")
 
     world.zarinpal.verify_code = 101  # it had gone through after all
-    assert world.client.get("/v1/billing").json()["plan"] == "starter"
-    assert world.billing.entitlement(tenant_id).plan == PlanId.STARTER
+    assert world.client.get("/v1/billing").json()["plan"] == "basic"
+    assert world.billing.entitlement(tenant_id).plan == PlanId.BASIC
 
 
 def test_the_sign_in_page_is_told_which_ways_in_work():

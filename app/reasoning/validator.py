@@ -2,6 +2,7 @@ from app.models.reasoning import (
     TitleReasoningCandidate,
     TitleReasoningInput,
 )
+from app.reasoning.claims import promises_not_made
 
 
 def _normalize(value: str) -> str:
@@ -50,6 +51,12 @@ def validate_title_candidate(
     if normalized_title in competitor_titles:
         errors.append(
             "title_matches_competitor_title"
+        )
+
+    # A competitor's promise is theirs: only the page's own title counts.
+    if promises_not_made(title, reasoning_input.current_title):
+        errors.append(
+            "title_makes_a_promise_the_page_does_not"
         )
 
     return errors

@@ -62,6 +62,8 @@ class RuntimeConfig(BaseModel):
     reasoning_config_version: str = Field(default="runtime-stage36-v1", min_length=1)
     arvan_endpoint: str | None = None
     arvan_model: str | None = None
+    # The cheaper model the basic plan's texts are written by; unset: arvan_model for all.
+    arvan_basic_model: str | None = None
     arvan_api_key_ref: str | None = Field(default=None, repr=False)
 
     # Keyword demand (search volume). The provider is a setting, not code:
@@ -96,7 +98,7 @@ class RuntimeConfig(BaseModel):
     # Paying for a plan. The merchant id is a secret like any key.
     billing_mode: str = Field(default="none", pattern=r"^(none|zarinpal|zarinpal_sandbox)$")
     zarinpal_merchant_ref: str | None = Field(default=None, repr=False)
-    # "starter=490000,growth=1290000,pro=2990000", tomans a month (app.billing.plans).
+    # "basic=890000,gold=3500000", tomans a month (app.billing.plans).
     plan_prices: str | None = None
 
     @field_validator("api_key")
@@ -274,6 +276,7 @@ class RuntimeConfig(BaseModel):
             ),
             arvan_endpoint=_env_optional("SEO_AGENT_ARVAN_ENDPOINT"),
             arvan_model=_env_optional("SEO_AGENT_ARVAN_MODEL"),
+            arvan_basic_model=_env_optional("SEO_AGENT_ARVAN_BASIC_MODEL"),
             arvan_api_key_ref=_env_optional("SEO_AGENT_ARVAN_API_KEY_REF"),
             google_oauth_client_id=_env_optional("SEO_AGENT_GOOGLE_OAUTH_CLIENT_ID"),
             google_oauth_client_secret=_env_optional("SEO_AGENT_GOOGLE_OAUTH_CLIENT_SECRET"),

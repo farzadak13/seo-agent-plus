@@ -59,7 +59,8 @@ backup ها نگه دار. بدون آن کلید، رمزهای ذخیره‌ش
 
     SEO_AGENT_LLM_MODE=arvan
     SEO_AGENT_ARVAN_ENDPOINT=<آدرس endpoint از پنل آروان>
-    SEO_AGENT_ARVAN_MODEL=<نام مدل>
+    SEO_AGENT_ARVAN_MODEL=<نام مدل؛ برای اشتراک طلایی و حساب‌های بدون اشتراک>
+    SEO_AGENT_ARVAN_BASIC_MODEL=<اختیاری: مدل ارزان‌تر اشتراک پایه و دورهٔ آزمایشی>
     SEO_AGENT_ARVAN_API_KEY_REF=ARVAN_AI_KEY
     ARVAN_AI_KEY=<کلید>
 

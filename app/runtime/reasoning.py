@@ -13,13 +13,14 @@ from app.reasoning.arvan_transport import ArvanTransport
 from app.reasoning.provider import StructuredTitleReasoner
 from app.reasoning.registry import ProviderRegistry
 from app.reasoning.router import ReasoningRouter
+from app.reasoning.tiers import TieredTransport
 
 
 class ReasoningNotConfiguredError(RuntimeError):
     """Raised when reasoning is required but no provider is configured."""
 
 
-def build_arvan_transport(config, *, secret_resolver) -> ArvanTransport:
+def build_arvan_transport(config, *, secret_resolver, model: str | None = None) -> ArvanTransport:
     """The model's connection, for every caller that asks it something.
 
     The API key is resolved through the SecretResolver so the raw value never
@@ -41,15 +42,28 @@ def build_arvan_transport(config, *, secret_resolver) -> ArvanTransport:
     provider_config = ArvanAIProviderConfig(
         endpoint=config.arvan_endpoint,
         api_key=api_key,
-        model=config.arvan_model,
+        model=model or config.arvan_model,
         timeout_seconds=config.llm_timeout_seconds,
     )
     return ArvanTransport(config=provider_config)
 
 
-def build_reasoning_router(config, *, secret_resolver):
+def build_llm_transport(config, *, secret_resolver, billing=None):
+    """The model's connection, by plan when a cheaper model is set for the basic one."""
+    best = build_arvan_transport(config, secret_resolver=secret_resolver)
+    basic_model = (config.arvan_basic_model or "").strip()
+    if not basic_model or billing is None or basic_model == config.arvan_model:
+        return best
+    return TieredTransport(
+        default=best,
+        basic=build_arvan_transport(config, secret_resolver=secret_resolver, model=basic_model),
+        is_basic=billing.basic_writer,
+    )
+
+
+def build_reasoning_router(config, *, secret_resolver, billing=None):
     """Build a ReasoningRouter from runtime configuration."""
-    transport = build_arvan_transport(config, secret_resolver=secret_resolver)
+    transport = build_llm_transport(config, secret_resolver=secret_resolver, billing=billing)
     reasoner = StructuredTitleReasoner(
         transport=transport,
         max_retries=transport.max_retries,

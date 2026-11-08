@@ -83,7 +83,7 @@ test("a wrong code says so in Persian", async (t) => {
 function billing(extra = {}) {
   return {
     plan: "trial", plan_name: "آزمایشی", active: true, days_left: 7, sites_used: 0, sites_limit: 1, can_pay: true,
-    plans: [{ plan: "starter", name: "پایه", sites: 1, price: 490000 }, { plan: "growth", name: "رشد", sites: 3, price: 1290000 }],
+    plans: [{ plan: "basic", name: "پایه", sites: 1, price: 890000 }, { plan: "gold", name: "طلایی", sites: 3, price: 3500000 }],
     payments: [], ...extra,
   };
 }
@@ -93,11 +93,11 @@ test("the subscription page shows the time left and sends the customer to pay", 
   const container = new FakeElement("main");
   await billingPage(container, { param: null, alive: () => true });
   assert.ok(container.textContent.includes("دورهٔ آزمایشی رایگان: ۷ روز مانده است."));
-  assert.ok(container.textContent.includes("۴۹۰٬۰۰۰ تومان") || container.textContent.includes("۴۹۰,۰۰۰ تومان"));
+  assert.ok(container.textContent.includes("۸۹۰٬۰۰۰ تومان") || container.textContent.includes("۸۹۰,۰۰۰ تومان"));
 
   button(container, "خرید یک ماه").click();
   await settle();
-  assert.deepEqual(server.calls.at(-1), ["/v1/billing/checkout", { plan: "starter" }]);
+  assert.deepEqual(server.calls.at(-1), ["/v1/billing/checkout", { plan: "basic" }]);
   assert.equal(server.assigned, "https://pay.example/StartPay/A1");
 });
 

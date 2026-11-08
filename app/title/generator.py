@@ -41,6 +41,7 @@ def generate_title_reasoning(
     ] = []
 
     rejected_count = 0
+    rejection_reasons: set[str] = set()
 
     for candidate in raw_candidates:
         errors = validate_title_candidate(
@@ -50,6 +51,7 @@ def generate_title_reasoning(
 
         if errors:
             rejected_count += 1
+            rejection_reasons.update(errors)
             continue
 
         accepted_candidates.append(candidate)
@@ -73,6 +75,9 @@ def generate_title_reasoning(
                 ),
                 "rejected_candidate_count": (
                     rejected_count
+                ),
+                "rejection_reasons": sorted(
+                    rejection_reasons
                 ),
             },
             snapshot=recommendation.snapshot,

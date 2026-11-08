@@ -87,6 +87,11 @@ class Billing:
             sites=self.plans[subscription.plan].sites,
         )
 
+    def basic_writer(self, tenant_id: str) -> bool:
+        """Whether the cheaper model writes for this tenant (app.reasoning.tiers)."""
+        plan = self.entitlement(tenant_id).plan
+        return plan is not None and self.plans[plan].basic_writer
+
     def require_active(self, tenant_id: str) -> Entitlement:
         entitlement = self.entitlement(tenant_id)
         if not entitlement.active:
@@ -208,8 +213,8 @@ class Billing:
     def _remaining_in(self, current: Subscription | None, plan: PlanId, now: datetime) -> timedelta:
         """The time left, in the plan being bought: worth what was paid for it.
 
-        A month of pro left becomes about six of starter, and a month of
-        starter about ten days of pro. The trial's days are a gift, kept as days.
+        A month of gold left becomes about four of basic, and a month of
+        basic about a week of gold. The trial's days are a gift, kept as days.
         """
         if current is None or current.ends_at <= now:
             return timedelta(0)

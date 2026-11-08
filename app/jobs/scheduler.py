@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from app.jobs.store import JobStore
 from app.models.jobs import Job
+from app.reasoning.tiers import acting_for
 
 
 class JobHandler(Protocol):
@@ -102,7 +103,9 @@ class JobScheduler:
                                 attributes={"job_type": running.job_type,
                                             "attempt": running.attempt_count}):
                 handler = self._handlers.resolve(running.job_type)
-                result = handler(dict(running.payload))
+                # Whose job it is, for the model that writes for them (app.reasoning.tiers).
+                with acting_for(running.principal_id):
+                    result = handler(dict(running.payload))
             completed = running.complete(result)
         except Exception as exc:
             completed = running.retry_or_fail(str(exc))

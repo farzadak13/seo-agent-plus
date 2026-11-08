@@ -1,7 +1,8 @@
 from app.models.reasoning import TitleReasoningInput
 from app.models.llm import LLMMessage
 # v2: exactly three distinct candidates, so the customer has a real choice.
-PROMPT_VERSION = "title-reasoning-v2"
+# v3: no promises the page does not make (app.reasoning.claims).
+PROMPT_VERSION = "title-reasoning-v3"
 CANDIDATE_COUNT = 3
 
 SYSTEM_PROMPT = """
@@ -13,6 +14,9 @@ Rules:
 - Do not invent SERP facts.
 - Do not invent competitor data.
 - Do not claim facts that are not present in the input.
+- No promises the current title does not make: no discount, free, guarantee,
+  fast or free delivery, booking, instalments, "best" or "cheapest".
+- Write natural, fluent Persian, as a Persian copywriter would.
 - Do not copy competitor titles.
 - Preserve primary query relevance.
 - Return only valid JSON matching the requested schema.

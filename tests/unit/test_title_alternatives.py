@@ -47,5 +47,5 @@ def test_the_model_is_asked_for_three_distinct_candidates():
         "primary_query": "کفش", "competitor_titles": [], "constraints": [],
     })
     messages = build_title_reasoning_prompt(reasoning_input)
-    assert CANDIDATE_COUNT == 3 and PROMPT_VERSION == "title-reasoning-v2"
+    assert CANDIDATE_COUNT == 3 and PROMPT_VERSION == "title-reasoning-v3"
     assert "exactly 3 candidates" in messages[1].content

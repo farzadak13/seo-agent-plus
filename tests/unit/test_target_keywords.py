@@ -68,7 +68,7 @@ class FakeModel:
 class Reasoner(FakeReasoner):
     def generate_title_candidates(self, reasoning_input):
         return [TitleReasoningCandidate(
-            candidate_id="candidate-1", title="خرید کفش ورزشی اصل با ارسال رایگان",
+            candidate_id="candidate-1", title="خرید کفش ورزشی اصل در مدل‌های گوناگون",
             rationale="بر پایهٔ نتایج گوگل", confidence_score=0.9,
         )]
 
@@ -286,7 +286,7 @@ def test_a_title_for_a_new_page_is_compared_with_google_and_waits_for_approval()
     finished = world.runs.get(run["run_id"])
     assert finished.result["title_proposal_status"] == "completed", finished.result
     action = world.actions.find(finished.result["action_id"])
-    assert action.action.parameters["recommended_title"] == "خرید کفش ورزشی اصل با ارسال رایگان"
+    assert action.action.parameters["recommended_title"] == "خرید کفش ورزشی اصل در مدل‌های گوناگون"
     assert action.status.value == "awaiting_approval"
     assert world.serp.asked == ["کفش ورزشی"]
 

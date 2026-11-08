@@ -14,9 +14,8 @@ from enum import StrEnum
 
 class PlanId(StrEnum):
     TRIAL = "trial"
-    STARTER = "starter"
-    GROWTH = "growth"
-    PRO = "pro"
+    BASIC = "basic"
+    GOLD = "gold"
 
 
 @dataclass(frozen=True)
@@ -26,20 +25,24 @@ class Plan:
     sites: int
     # Tomans for one period; 0 for the trial, which is not sold.
     price: int
+    # Written by the cheaper model (SEO_AGENT_ARVAN_BASIC_MODEL), or the best one.
+    basic_writer: bool = True
 
 
 TRIAL_LENGTH = timedelta(days=7)
 PERIOD = timedelta(days=30)
 
-DEFAULT_PRICES = {PlanId.STARTER: 490_000, PlanId.GROWTH: 1_290_000, PlanId.PRO: 2_990_000}
-_NAMES = {PlanId.TRIAL: "آزمایشی", PlanId.STARTER: "پایه", PlanId.GROWTH: "رشد", PlanId.PRO: "حرفه‌ای"}
-_SITES = {PlanId.TRIAL: 1, PlanId.STARTER: 1, PlanId.GROWTH: 3, PlanId.PRO: 10}
+DEFAULT_PRICES = {PlanId.BASIC: 890_000, PlanId.GOLD: 3_500_000}
+_NAMES = {PlanId.TRIAL: "آزمایشی", PlanId.BASIC: "پایه", PlanId.GOLD: "طلایی"}
+_SITES = {PlanId.TRIAL: 1, PlanId.BASIC: 1, PlanId.GOLD: 3}
+# The trial is the basic plan for a week: what the customer will have if they buy it.
+_BASIC_WRITER = {PlanId.TRIAL: True, PlanId.BASIC: True, PlanId.GOLD: False}
 # Zarinpal takes at least 1,000 tomans; anything lower is a typo in the setting.
 MIN_PRICE = 1_000
 
 
 def parse_prices(text: str | None) -> dict[PlanId, int]:
-    """"starter=490000,growth=1290000" → prices; plans left out keep their default."""
+    """"basic=890000,gold=3500000" → prices; plans left out keep their default."""
     prices = dict(DEFAULT_PRICES)
     for part in (text or "").split(","):
         if not part.strip():
@@ -58,6 +61,9 @@ def parse_prices(text: str | None) -> dict[PlanId, int]:
 def catalog(prices: dict[PlanId, int] | None = None) -> dict[PlanId, Plan]:
     prices = prices or DEFAULT_PRICES
     return {
-        plan: Plan(plan_id=plan, name=_NAMES[plan], sites=_SITES[plan], price=0 if plan == PlanId.TRIAL else prices[plan])
+        plan: Plan(
+            plan_id=plan, name=_NAMES[plan], sites=_SITES[plan],
+            price=0 if plan == PlanId.TRIAL else prices[plan], basic_writer=_BASIC_WRITER[plan],
+        )
         for plan in PlanId
     }

@@ -142,7 +142,7 @@ class FakeReasoner:
         return [
             TitleReasoningCandidate(
                 candidate_id="candidate-1",
-                title="خرید کفش مردانه با بهترین قیمت",
+                title="خرید کفش مردانه با قیمت روز",
                 rationale="query relevance",
                 confidence_score=0.90,
             ),
@@ -173,7 +173,7 @@ class FakeInvalidReasoner:
             ),
             TitleReasoningCandidate(
                 candidate_id="invalid-2",
-                title="خرید کفش مردانه با بهترین قیمت",
+                title="خرید کفش مردانه با قیمت روز",
                 rationale="competitor clone",
                 confidence_score=0.95,
             ),
@@ -381,3 +381,27 @@ def test_reasoning_is_deterministic():
     )
 
     assert first.model_dump() == second.model_dump()
+
+def test_titles_turned_down_for_a_promise_say_so():
+    class PromisingReasoner:
+        provider_id = "promising"
+
+        def generate_title_candidates(self, reasoning_input):
+            return [
+                TitleReasoningCandidate(
+                    candidate_id="p-1",
+                    title=f"{reasoning_input.primary_query} با تخفیف ویژه",
+                    rationale="sells",
+                    confidence_score=0.9,
+                )
+            ]
+
+    result = generate_title_reasoning(
+        recommendation=make_recommendation(),
+        investigation=make_investigation(),
+        decision=make_pass_decision(),
+        reasoner=PromisingReasoner(),
+    )
+
+    assert result.status == ReasoningStatus.REJECTED
+    assert result.evidence["rejection_reasons"] == ["title_makes_a_promise_the_page_does_not"]
