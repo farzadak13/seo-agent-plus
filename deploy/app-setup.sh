@@ -169,9 +169,24 @@ server {
         allow all;
     }
 
+    # One address for the site: http and www both lead to https://${DOMAIN}
+    # by a permanent redirect, so Google sees one site, not two copies.
     location / {
-        return 301 https://\$host\$request_uri;
+        return 301 https://${DOMAIN}\$request_uri;
     }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name www.${DOMAIN};
+
+    ssl_certificate     ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    return 301 https://${DOMAIN}\$request_uri;
 }
 
 server {
@@ -180,7 +195,7 @@ server {
     # and the whole config fails to load.
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name ${DOMAIN} www.${DOMAIN};
+    server_name ${DOMAIN};
 
     ssl_certificate     ${CERT_DIR}/fullchain.pem;
     ssl_certificate_key ${CERT_DIR}/privkey.pem;
