@@ -52,6 +52,7 @@ def test_each_plan_allows_what_was_decided():
     assert (basic.changes_a_month, basic.targets, basic.rescan_every) == (20, 10, timedelta(days=30))
     assert (gold.changes_a_month, gold.targets, gold.rescan_every) == (100, 50, timedelta(days=7))
     assert (trial.changes_a_month, trial.targets) == (10, 10)
+    assert gold.competitors and not basic.competitors and not trial.competitors and UNLIMITED.competitors
 
 
 def test_only_approvals_of_the_last_30_days_count_across_pages():

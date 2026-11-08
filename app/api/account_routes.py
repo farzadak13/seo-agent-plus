@@ -215,6 +215,7 @@ def register_account_routes(
                     "plan": plan.plan_id.value, "name": plan.name, "sites": plan.sites, "price": plan.price,
                     "changes_a_month": plan.changes_a_month, "targets": plan.targets,
                     "rescan_days": plan.rescan_every.days, "best_writer": not plan.basic_writer,
+                    "competitors": plan.competitors,
                 }
                 for plan in service.plans.values()
                 if plan.plan_id != PlanId.TRIAL

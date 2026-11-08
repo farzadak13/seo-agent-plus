@@ -12,6 +12,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 from app.action.approval import propose_title_change
 from app.action.planner import build_action
@@ -24,6 +25,7 @@ from app.models.target_keywords import (
     TARGET_KEYWORD_ORIGIN,
     KeywordStatus,
     RankCheck,
+    Rival,
     SuggestionStatus,
     TargetKeyword,
     TargetKeywordSet,
@@ -247,6 +249,46 @@ def build_target_title_handler(
     return handler
 
 
+LEADERS = 3
+
+
+def host_of_url(url: str) -> str:
+    """The site's host, without www., in its ASCII (punycode) form; "" when there is none.
+
+    One form for a name typed in Persian letters and the same name in Google's
+    results. Exact: blog.example.com is not example.com.
+    """
+    try:
+        host = (urlparse(url).hostname or "").lower().rstrip(".")
+        host = host.encode("idna").decode("ascii") if host else ""
+    except (ValueError, UnicodeError):
+        return ""
+    host = host[4:] if host.startswith("www.") else host
+    return host if len(host) <= 253 else ""
+
+
+def standings(results, own_url: str, competitors: list[str]) -> tuple[list[Rival], list[Rival]]:
+    """Where each named competitor stood, and the first three other sites, from one search.
+
+    Only the competitors found are kept: one not among them is not in the first ten.
+    """
+    own = host_of_url(own_url)
+    first: dict[str, int] = {}
+    for result in sorted(results, key=lambda item: item.position):
+        host = host_of_url(result.url)  # "" for an address that cannot be read: skipped
+        if host and host != own:
+            first.setdefault(host, result.position)
+    rivals = [Rival(host=host, position=first[host]) for host in competitors if host in first]
+    leaders = [Rival(host=host, position=position) for host, position in list(first.items())[:LEADERS]]
+    return rivals, leaders
+
+
+def _without_leaders(checks: list[RankCheck]) -> list[RankCheck]:
+    # The first three of an old week say little the latest does not; they would
+    # only grow every version of the set.
+    return [check.model_copy(update={"leaders": []}) if check.leaders else check for check in checks]
+
+
 class RankTracker:
     """Where each confirmed word's page stands in Google, once a week.
 
@@ -268,9 +310,12 @@ class RankTracker:
         active: Callable[[str], bool] = lambda tenant_id: True,
         # How many of a site's words its plan pays for; the first kept are looked up.
         targets_of: Callable[[str], int | None] = lambda tenant_id: None,
+        # Whether the plan shows competitors: kept from the same search only then.
+        rivals_of: Callable[[str], bool] = lambda tenant_id: True,
     ) -> None:
         self._active = active
         self._targets_of = targets_of
+        self._rivals_of = rivals_of
         self._targets = target_store
         self._sites = site_store
         self._serp = serp_provider
@@ -296,6 +341,8 @@ class RankTracker:
             due = [item for item in kept if not item.checks or now - item.checks[-1].checked_at >= RANK_EVERY]
             if not due:
                 continue
+            # A competitor named while this round searched shows from the week after.
+            with_rivals = self._rivals_of(keywords.tenant_id)
             found: dict[str, RankCheck] = {}
             for item in due[: self._per_round - checked]:
                 try:
@@ -309,8 +356,12 @@ class RankTracker:
                 if item.checks and snapshot.fetched_at <= item.checks[-1].checked_at:
                     continue
                 mine = next((result for result in snapshot.results if same_site(str(site.base_url), result.url)), None)
+                rivals, leaders = (
+                    standings(snapshot.results, str(site.base_url), keywords.competitors) if with_rivals else ([], [])
+                )
                 found[item.keyword] = RankCheck(
-                    checked_at=snapshot.fetched_at, position=mine.position if mine else None, url=mine.url if mine else None
+                    checked_at=snapshot.fetched_at, position=mine.position if mine else None, url=mine.url if mine else None,
+                    watched=list(keywords.competitors) if with_rivals else [], rivals=rivals, leaders=leaders,
                 )
             self._save(keywords.site_id, found)
         return {"checked": checked}
@@ -322,7 +373,7 @@ class RankTracker:
         def change(latest: TargetKeywordSet):
             # Worked out from the set as it is now: the customer may have changed it while we looked.
             updated = [
-                item.model_copy(update={"checks": [*item.checks, found[item.keyword]][-KEPT_CHECKS:]})
+                item.model_copy(update={"checks": [*_without_leaders(item.checks), found[item.keyword]][-KEPT_CHECKS:]})
                 if item.keyword in found and (not item.checks or found[item.keyword].checked_at > item.checks[-1].checked_at)
                 else item
                 for item in latest.keywords

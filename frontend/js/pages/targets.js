@@ -23,6 +23,36 @@ function trendText(item) {
   return now < before ? `${fmt.int(before - now)} رتبه بالاتر از هفتهٔ قبل` : `${fmt.int(now - before)} رتبه پایین‌تر از هفتهٔ قبل`;
 }
 
+// One site's place, in words.
+function placeText(position) {
+  return position === null ? "در ۱۰ نتیجهٔ اول نیست" : `جایگاه ${fmt.int(position)}`;
+}
+
+// The other sites at the top for the word, from the latest look.
+function leadersText(check) {
+  if (!check?.leaders?.length) return null;
+  return `سایت‌های بالای نتایج: ${check.leaders.map((rival) => `${rival.host} (${fmt.int(rival.position)})`).join("، ")}`;
+}
+
+// Each named competitor's place this week, and how it moved since the week before.
+// One looked for and not found is not in the first ten; one named since the last
+// look has not been looked for yet.
+function rivalsText(item, competitors) {
+  const last = item.checks.at(-1);
+  if (!last || !competitors.length) return null;
+  const looked = (check, host) => (check?.watched || []).includes(host);
+  const at = (check, host) => (check?.rivals || []).find((rival) => rival.host === host)?.position ?? null;
+  const before = item.checks.length > 1 ? item.checks.at(-2) : null;
+  return `رقیب‌ها: ${competitors.map((host) => {
+    if (!looked(last, host)) return `${host} هنوز بررسی نشده`;
+    const now = at(last, host);
+    const was = looked(before, host) ? at(before, host) : null;
+    let moved = "";
+    if (was !== null && now !== null && was !== now) moved = now < was ? " (بالاتر آمد)" : " (پایین‌تر رفت)";
+    return `${host} ${placeText(now)}${moved}`;
+  }).join(" · ")}`;
+}
+
 // Why no title came, in the customer's terms: the reasons are the SERP check's own.
 function blockedText(reasons) {
   if (reasons.some((reason) => reason.startsWith("serp_unavailable"))) {
@@ -43,6 +73,8 @@ export function targetsPanel({ site, alive }) {
   let data = null;
   // The pages a word can be for come with the first look; later answers are the list alone.
   let pages = [];
+  // Whether the plan shows competitors; it comes with the first look, like the pages.
+  let competitorsAllowed = true;
 
   const say = (text, tone = "") => {
     notice.className = `notice${tone ? ` notice-${tone}` : ""}`;
@@ -65,6 +97,7 @@ export function targetsPanel({ site, alive }) {
     try {
       data = await api(`${base}/target-keywords`);
       pages = data.pages || pages;
+      if (typeof data.competitors_allowed === "boolean") competitorsAllowed = data.competitors_allowed;
     } catch (error) {
       if (alive()) say(messageFor(error), "error");
       return;
@@ -143,6 +176,8 @@ export function targetsPanel({ site, alive }) {
       actions.append(title, status("dismissed", "حذف"));
     }
     const trend = trendText(item);
+    // Only for a plan that has them, and only once the word has been looked up.
+    const showRivals = competitorsAllowed && item.status === "confirmed" && item.checks.length > 0;
     return h("div", { class: "target-row" },
       h("div", { class: "target-word" },
         h("strong", { text: item.keyword }),
@@ -152,6 +187,12 @@ export function targetsPanel({ site, alive }) {
       item.reason ? h("div", { class: "small muted", text: item.reason }) : null,
       item.status === "confirmed"
         ? h("div", { class: "small" }, positionText(item), trend ? h("span", { class: "muted", text: ` · ${trend}` }) : null)
+        : null,
+      showRivals && rivalsText(item, data.competitors || [])
+        ? h("div", { class: "small", text: rivalsText(item, data.competitors || []) })
+        : null,
+      showRivals && leadersText(item.checks.at(-1))
+        ? h("div", { class: "small muted", text: leadersText(item.checks.at(-1)) })
         : null,
       actions,
       result,
@@ -164,6 +205,7 @@ export function targetsPanel({ site, alive }) {
   function draw() {
     const typed = fields && {
       description: fields.description.value, seeds: fields.seeds.value, word: fields.word.value, page: fields.page.value,
+      rivals: fields.rivals ? fields.rivals.value : null,
     };
     clear(section);
     const running = data.suggestion_status === "running";
@@ -195,7 +237,33 @@ export function targetsPanel({ site, alive }) {
     const page = h("select", { class: "input", "aria-label": "برای کدام صفحه" },
       pages.map((item) => h("option", { value: item.url, text: item.title || readableUrl(item.url) })));
     if (typed && pages.some((item) => item.url === typed.page)) page.value = typed.page;
-    fields = { description, seeds, word, page };
+    const rivals = h("input", {
+      class: "input ltr", maxLength: 300, value: typed && typed.rivals !== null ? typed.rivals : (data.competitors || []).join("، "),
+      placeholder: "digikala.com، torob.com", "aria-label": "سایت رقیب‌ها",
+    });
+    const saveRivals = h("button", {
+      class: "btn", type: "button", text: "ذخیرهٔ رقیب‌ها",
+      onclick: async () => {
+        const typedRivals = rivals.value.split(/[,،\s]+/).map((value) => value.trim()).filter(Boolean);
+        if (typedRivals.length > 3) {
+          say("فقط سه رقیب را می‌شود دنبال کرد؛ بقیه را پاک کنید.", "warn");
+          return;
+        }
+        const answer = await call(saveRivals, `${base}/target-keywords/competitors`, { method: "PUT", body: { competitors: typedRivals } });
+        if (answer && alive()) {
+          saveRivals.disabled = false;
+          data = { ...answer, competitors_allowed: competitorsAllowed };
+          fields.rivals = null;
+          draw();
+          say("رقیب‌ها ذخیره شد. جایگاهشان از بررسی هفتگی بعدی کنار جایگاه شما دیده می‌شود.", "good");
+        }
+      },
+    });
+    fields = { description, seeds, word, page, rivals: competitorsAllowed ? rivals : null };
+    const competitorsBox = competitorsAllowed
+      ? h("div", { class: "target-add" },
+          h("div", { class: "small", text: "سایت رقیب‌هایتان (تا سه سایت):" }), rivals, saveRivals)
+      : h("p", { class: "small muted", text: "دیدن رتبهٔ رقیب‌ها کنار رتبهٔ خودتان مخصوص اشتراک طلایی است." });
     const add = h("button", {
       class: "btn", type: "button", text: "افزودن",
       onclick: async () => {
@@ -218,6 +286,7 @@ export function targetsPanel({ site, alive }) {
         ? h("div", { class: "notice notice-warn", text: "پیشنهاد کلمه انجام نشد. کمی بعد دوباره امتحان کنید." })
         : null,
       keep.length ? h("div", { class: "target-list" }, keep.map(row)) : null,
+      keep.some((item) => item.status === "confirmed") ? competitorsBox : null,
       pages.length
         ? h("div", { class: "target-add" }, h("div", { class: "small", text: "کلمهٔ خودتان را اضافه کنید:" }), word, page, add)
         : null,

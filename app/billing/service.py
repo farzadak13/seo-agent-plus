@@ -92,7 +92,10 @@ class Billing:
         if plan is None:
             return UNLIMITED
         chosen = self.plans[plan]
-        return Limits(changes_a_month=chosen.changes_a_month, targets=chosen.targets, rescan_every=chosen.rescan_every)
+        return Limits(
+            changes_a_month=chosen.changes_a_month, targets=chosen.targets, rescan_every=chosen.rescan_every,
+            competitors=chosen.competitors,
+        )
 
     def basic_writer(self, tenant_id: str) -> bool:
         """Whether the cheaper model writes for this tenant (app.reasoning.tiers)."""

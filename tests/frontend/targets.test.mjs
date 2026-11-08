@@ -175,3 +175,57 @@ test("what is being typed stays while the panel follows a suggestion", async (t)
   assert.equal(after.value, "فروشگاه کفش");
   assert.equal(word.value, "کفش مردانه");
 });
+
+
+test("each word says where the named competitors and the first three stand", async (t) => {
+  const checks = [
+    { checked_at: "2026-10-25T00:00:00Z", position: 6, watched: ["b.example"], rivals: [{ host: "b.example", position: 5 }], leaders: [] },
+    {
+      checked_at: "2026-11-01T00:00:00Z", position: 4,
+      watched: ["b.example", "gone.example"], rivals: [{ host: "b.example", position: 2 }],
+      leaders: [{ host: "a.example", position: 1 }, { host: "b.example", position: 2 }, { host: "c.example", position: 3 }],
+    },
+  ];
+  server.state = set({ competitors: ["b.example", "gone.example"], competitors_allowed: true, keywords: [word("کفش ورزشی", { status: "confirmed", checks })] });
+  const holder = await open(t);
+  assert.ok(holder.textContent.includes("رقیب‌ها: b.example جایگاه ۲ (بالاتر آمد) · gone.example در ۱۰ نتیجهٔ اول نیست"));
+  assert.ok(holder.textContent.includes("سایت‌های بالای نتایج: a.example (۱)، b.example (۲)، c.example (۳)"));
+});
+
+test("competitors are saved as typed, up to three", async (t) => {
+  server.state = set({ competitors_allowed: true, keywords: [word("کفش ورزشی", { status: "confirmed" })] });
+  const holder = await open(t);
+  const field = findAll(holder, (node) => node.attributes["aria-label"] === "سایت رقیب‌ها")[0];
+  type(field, "digikala.com، torob.com, a.ir b.ir");
+  button(holder, "ذخیرهٔ رقیب‌ها").click();
+  await settle();
+  assert.equal(server.calls.length, 0, "four are not sent");
+  assert.ok(holder.textContent.includes("فقط سه رقیب را می‌شود دنبال کرد"));
+  type(field, "digikala.com، torob.com, a.ir");
+  button(holder, "ذخیرهٔ رقیب‌ها").click();
+  await settle();
+  assert.deepEqual(server.calls.at(-1), ["PUT", `${BASE}/competitors`, { competitors: ["digikala.com", "torob.com", "a.ir"] }]);
+  assert.ok(holder.textContent.includes("رقیب‌ها ذخیره شد"));
+});
+
+test("without the gold plan the panel says where competitors are", async (t) => {
+  server.state = set({ competitors_allowed: false, keywords: [word("کفش ورزشی", { status: "confirmed" })] });
+  const holder = await open(t);
+  assert.ok(holder.textContent.includes("دیدن رتبهٔ رقیب‌ها کنار رتبهٔ خودتان مخصوص اشتراک طلایی است."));
+  assert.equal(findAll(holder, (node) => node.tagName === "button" && node.textContent === "ذخیرهٔ رقیب‌ها").length, 0);
+});
+
+test("a plan without competitors does not see what was kept under one that had them", async (t) => {
+  const checks = [{ checked_at: "2026-11-01T00:00:00Z", position: 4, rivals: [{ host: "b.example", position: 2 }], leaders: [{ host: "a.example", position: 1 }] }];
+  server.state = set({ competitors: ["b.example"], competitors_allowed: false, keywords: [word("کفش ورزشی", { status: "confirmed", checks })] });
+  const holder = await open(t);
+  assert.ok(!holder.textContent.includes("رقیب‌ها:"));
+  assert.ok(!holder.textContent.includes("سایت‌های بالای نتایج"));
+});
+
+test("a competitor named since the last look is not yet looked for, not out of the first ten", async (t) => {
+  const checks = [{ checked_at: "2026-11-01T00:00:00Z", position: 4, watched: ["b.example"], rivals: [], leaders: [] }];
+  server.state = set({ competitors: ["b.example", "new.example"], competitors_allowed: true, keywords: [word("کفش ورزشی", { status: "confirmed", checks })] });
+  const holder = await open(t);
+  assert.ok(holder.textContent.includes("رقیب‌ها: b.example در ۱۰ نتیجهٔ اول نیست · new.example هنوز بررسی نشده"));
+});

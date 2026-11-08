@@ -85,7 +85,7 @@ function billing(extra = {}) {
     plan: "trial", plan_name: "آزمایشی", active: true, days_left: 7, sites_used: 0, sites_limit: 1, can_pay: true,
     plans: [
       { plan: "basic", name: "پایه", sites: 1, price: 890000, changes_a_month: 20, targets: 10, rescan_days: 30, best_writer: false },
-      { plan: "gold", name: "طلایی", sites: 1, price: 3500000, changes_a_month: 100, targets: 50, rescan_days: 7, best_writer: true },
+      { plan: "gold", name: "طلایی", sites: 1, price: 3500000, changes_a_month: 100, targets: 50, rescan_days: 7, best_writer: true, competitors: true },
     ],
     changes: { used: 20, limit: 20, frees_at: "2026-12-01T10:00:00Z" },
     payments: [], ...extra,
@@ -101,6 +101,7 @@ test("the subscription page shows the time left and sends the customer to pay", 
   // What each plan gives, as the server says, and how much of this month is used.
   assert.ok(container.textContent.includes("عنوان و توضیحات با قوی‌ترین مدل هوش مصنوعی"));
   assert.ok(container.textContent.includes("بررسی خودکار سایت هر هفته"));
+  assert.ok(container.textContent.includes("رتبهٔ رقیب‌ها کنار رتبهٔ شما"));
   assert.ok(container.textContent.includes("بررسی خودکار سایت هر ماه"));
   assert.ok(container.textContent.includes("تغییرهای سئوی ۳۰ روز اخیر: ۲۰ از ۲۰"));
   assert.ok(container.textContent.includes("آزاد می‌شود"));

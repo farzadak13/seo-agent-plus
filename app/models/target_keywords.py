@@ -46,6 +46,16 @@ class SuggestionStatus(StrEnum):
     FAILED = "failed"
 
 
+class Rival(BaseModel):
+    """Another site in the same results: where it stood for the word that week."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    host: str = Field(min_length=1, max_length=253)
+    # None: not in the results looked at (the first ten).
+    position: int | None = Field(default=None, ge=1)
+
+
 class RankCheck(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -54,6 +64,13 @@ class RankCheck(BaseModel):
     position: int | None = Field(default=None, ge=1)
     # The site's own page that ranked, which may not be the one targeted.
     url: str | None = None
+    # The competitors the customer had named when this look was made, and those
+    # of them found, for a trend: one looked for and not found was not in the
+    # first ten; one named since has not been looked for yet.
+    watched: list[str] = Field(default_factory=list, max_length=3)
+    rivals: list[Rival] = Field(default_factory=list)
+    # The first three other sites; kept on the latest check only (see RankTracker).
+    leaders: list[Rival] = Field(default_factory=list)
 
 
 class TargetKeyword(BaseModel):
@@ -79,6 +96,8 @@ class TargetKeywordSet(BaseModel):
     tenant_id: str = Field(min_length=1)
     description: str = Field(default="", max_length=1000)
     seeds: list[str] = Field(default_factory=list, max_length=10)
+    # Competitors' sites the customer follows (hosts, without www.).
+    competitors: list[str] = Field(default_factory=list, max_length=3)
     keywords: list[TargetKeyword] = Field(default_factory=list)
     suggestion_status: SuggestionStatus = SuggestionStatus.IDLE
     suggestion_job_id: str | None = None

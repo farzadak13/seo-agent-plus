@@ -338,6 +338,7 @@ def build_runtime_container(config: RuntimeConfig) -> RuntimeContainer:
                 serp_provider=build_serp_provider(config, repository=repository, secret_resolver=secret_resolver),
                 active=lambda tenant_id: billing.entitlement(tenant_id).active,
                 targets_of=lambda tenant_id: billing.limits(tenant_id).targets,
+                rivals_of=lambda tenant_id: billing.limits(tenant_id).competitors,
             ),
             interval_seconds=RANK_ROUND_SECONDS,
             should_run=lambda: worker.running,

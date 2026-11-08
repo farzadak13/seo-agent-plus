@@ -24,7 +24,14 @@ from app.normalization.query import normalize_query
 from app.normalization.url import canonicalize_url
 from app.persistence.contracts import PersistenceConflictError, PersistenceNotFoundError
 from app.scan.crawler import _identity
-from app.targets.handler import TARGET_CANDIDATE, TARGET_SUGGEST_JOB_TYPE, TARGET_TITLE_JOB_TYPE, make_room, scan_pages
+from app.targets.handler import (
+    TARGET_CANDIDATE,
+    TARGET_SUGGEST_JOB_TYPE,
+    TARGET_TITLE_JOB_TYPE,
+    host_of_url,
+    make_room,
+    scan_pages,
+)
 
 # Each suggestion and each title is a model call, and a title a Google search
 # from the budget every customer shares: so per site, per word and per tenant.
@@ -63,6 +70,13 @@ class KeywordStatusRequest(BaseModel):
     status: KeywordStatus
 
 
+class CompetitorsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # Addresses or bare domains; at most three.
+    competitors: list[Annotated[str, Field(max_length=300)]] = Field(default_factory=list, max_length=3)
+
+
 class PageChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -74,6 +88,21 @@ class TargetKeywordsView(TargetKeywordSet):
     """The set, and the pages a word can be for: those the latest scan read."""
 
     pages: list[PageChoice] = Field(default_factory=list)
+    # Whether the plan shows where competitors stand (the gold plan's).
+    competitors_allowed: bool = True
+
+
+def competitor_host(typed: str) -> str | None:
+    """A site's host from an address or a bare domain, without www.; None when it is neither."""
+    text = typed.strip()
+    if not text:
+        return None
+    host = host_of_url(text if "://" in text else f"http://{text}")  # ASCII, as in Google's results
+    if "." not in host or any(not (part and len(part) <= 63) for part in host.split(".")):
+        return None
+    if not all(char.isascii() and (char.isalnum() or char in "-.") for char in host):
+        return None
+    return host
 
 
 def _within_day(times: list[datetime], now: datetime) -> int:
@@ -111,7 +140,19 @@ def register_target_routes(app: FastAPI, dependencies, *, principal_id: Callable
                 status_code=status.HTTP_409_CONFLICT,
                 detail="The target keywords changed while this request was being handled; reload and try again.",
             ) from exc
-        return updated
+        return as_shown(updated)
+
+    def as_shown(keywords: TargetKeywordSet) -> TargetKeywordSet:
+        """What the tenant's plan shows: competitors kept under one that had them (before
+        a downgrade) are not shown under one that has not; they stay for an upgrade."""
+        if limits_of(dependencies, keywords.tenant_id).competitors:
+            return keywords
+        return keywords.model_copy(update={"keywords": [
+            item.model_copy(update={"checks": [
+                check.model_copy(update={"watched": [], "rivals": [], "leaders": []}) for check in item.checks
+            ]})
+            for item in keywords.keywords
+        ]})
 
     def find_keyword(keywords: TargetKeywordSet, word: str) -> TargetKeyword:
         wanted = normalize_query(word)
@@ -136,10 +177,31 @@ def register_target_routes(app: FastAPI, dependencies, *, principal_id: Callable
             keywords = keywords.model_copy(update={"suggestion_status": SuggestionStatus.FAILED, "suggestion_error": "lost"})
         scan = latest_scan(site_id)
         pages = scan_pages(scan) if scan is not None else []
+        allowed = limits_of(dependencies, site.principal_id).competitors
         return TargetKeywordsView(
-            **keywords.model_dump(),
+            **as_shown(keywords).model_dump(),
             pages=[PageChoice(url=page.url, title=page.title) for page in pages],
+            competitors_allowed=allowed,
         )
+
+    @app.put("/v1/sites/{site_id}/target-keywords/competitors", response_model=TargetKeywordSet)
+    def set_competitors(site_id: str, request: CompetitorsRequest, authenticated_principal_id: str = Depends(principal_id)) -> TargetKeywordSet:
+        """The competitors' sites whose place for each word is looked up with the site's own."""
+        site = owned_site(site_id, authenticated_principal_id)
+        require_plan(dependencies, authenticated_principal_id)
+        if not limits_of(dependencies, site.principal_id).competitors:
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail="Competitors are part of the gold plan.")
+        hosts: list[str] = []
+        for typed in request.competitors:
+            host = competitor_host(typed)
+            if host is None:
+                raise HTTPException(status_code=422, detail="That is not a site address.")
+            if host == competitor_host(str(site.base_url)):
+                raise HTTPException(status_code=422, detail="That is this site itself.")
+            if host not in hosts:
+                hosts.append(host)
+        keywords, version = targets().read_or_new(site)
+        return save(keywords.model_copy(update={"competitors": hosts}), version)
 
     @app.put("/v1/sites/{site_id}/target-keywords/brief", response_model=TargetKeywordSet)
     def set_brief(site_id: str, request: BriefRequest, authenticated_principal_id: str = Depends(principal_id)) -> TargetKeywordSet:

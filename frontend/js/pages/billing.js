@@ -25,6 +25,7 @@ function features(plan) {
     `${fmt.int(plan.changes_a_month)} تغییر سئو در ماه، با تأیید شما`,
     `تا ${fmt.int(plan.targets)} کلمهٔ هدف، با رتبهٔ هفتگی`,
     plan.rescan_days <= 7 ? "بررسی خودکار سایت هر هفته" : "بررسی خودکار سایت هر ماه",
+    plan.competitors ? "رتبهٔ رقیب‌ها کنار رتبهٔ شما" : null,
     "robots.txt و نقشهٔ سایت",
   ];
 }
@@ -86,7 +87,7 @@ export async function billingPage(container, { param, alive }) {
       state.plans.map((plan) => h("article", { class: `plan-card${state.plan === plan.plan ? " plan-current" : ""}` },
         h("div", { class: "plan-name", text: plan.name }),
         h("div", { class: "plan-price" }, toman(plan.price), h("span", { class: "small muted", text: " / ماه" })),
-        h("ul", { class: "plan-features" }, features(plan).map((text) => h("li", { text }))),
+        h("ul", { class: "plan-features" }, features(plan).filter(Boolean).map((text) => h("li", { text }))),
         state.plan ? pay(plan) : "",
       )),
     ),

@@ -624,3 +624,117 @@ def test_one_bad_word_in_an_answer_does_not_cost_the_rest():
         ("کفش", BASE, "commercial", ""),
     )
     assert [item.keyword for item in parse_keyword_answer(raw, pages=PAGES, identity=_identity)] == ["کفش"]
+
+
+
+# Competitors: from the same weekly search, for the gold plan.
+
+
+def test_where_competitors_stand_comes_from_the_same_search():
+    from app.models.serp import SERPResultItem
+    from app.targets.handler import standings
+
+    results = [
+        SERPResultItem(position=1, url="https://www.a.example/1", title="x"),
+        SERPResultItem(position=2, url="https://a.example/2", title="x"),  # the same site again
+        SERPResultItem(position=3, url=f"{BASE}a", title="x"),  # the customer's own
+        SERPResultItem(position=4, url="https://b.example/", title="x"),
+        SERPResultItem(position=5, url="https://c.example/", title="x"),
+        SERPResultItem(position=6, url="http://[broken", title="x"),  # an address that cannot be read
+    ]
+    rivals, leaders = standings(results, BASE, ["b.example", "gone.example"])
+    assert [(r.host, r.position) for r in rivals] == [("b.example", 4)], "one not found is not kept"
+    assert [(r.host, r.position) for r in leaders] == [("a.example", 1), ("b.example", 4), ("c.example", 5)]
+
+
+def keep_two_words(world):
+    world.scan()
+    for keyword in ("کفش ۱", "کفش ۲"):
+        world.call("POST", expect=201, keyword=keyword)
+
+
+def test_the_weekly_look_keeps_competitors_and_only_the_latest_first_three():
+    world = World()
+    keep_two_words(world)
+    assert world.call("PUT", "/competitors", competitors=["https://www.b.example/shop", "c.example"])["competitors"] == ["b.example", "c.example"]
+    world.tracker().run_round()
+    world.serp.fetched_at += timedelta(days=8)
+    world.now += timedelta(days=8)
+    world.tracker().run_round()
+    checks = world.targets.find("site-1").keywords[0].checks
+    assert [(r.host, r.position) for r in checks[-1].rivals] == [("b.example", 2), ("c.example", 3)]
+    assert [r.host for r in checks[-1].leaders] == ["a.example", "b.example", "c.example"]
+    assert checks[0].rivals and checks[0].leaders == [], "an old week keeps its competitors, not its first three"
+    assert checks[-1].watched == ["b.example", "c.example"]
+
+
+def test_a_plan_without_competitors_neither_keeps_nor_sets_them():
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from app.billing.plans import UNLIMITED
+
+    class Basic:
+        def limits(self, tenant_id):
+            return replace(UNLIMITED, competitors=False)
+
+        def require_active(self, tenant_id):
+            return SimpleNamespace(active=True)
+
+    world = World()
+    keep_two_words(world)
+    world.client.app.state.dependencies.billing = Basic()
+    assert world.client.get("/v1/sites/site-1/target-keywords").json()["competitors_allowed"] is False
+    refused = world.client.put("/v1/sites/site-1/target-keywords/competitors", json={"competitors": ["b.example"]})
+    assert refused.status_code == 402
+    world.tracker(rivals_of=lambda tenant_id: False).run_round()
+    check = world.targets.find("site-1").keywords[0].checks[-1]
+    assert check.rivals == [] and check.leaders == []
+
+
+def test_a_competitor_must_be_another_site():
+    world = World()
+    world.scan()
+    for typed in ("not a site", "https://", "a..example"):
+        assert world.client.put("/v1/sites/site-1/target-keywords/competitors", json={"competitors": [typed]}).status_code == 422, typed
+    own = world.client.put("/v1/sites/site-1/target-keywords/competitors", json={"competitors": [BASE]})
+    assert own.status_code == 422 and "this site itself" in own.json()["detail"]
+    too_many = world.client.put("/v1/sites/site-1/target-keywords/competitors", json={"competitors": ["a.ir", "b.ir", "c.ir", "d.ir"]})
+    assert too_many.status_code == 422
+
+
+
+def test_a_name_in_persian_letters_is_the_same_site_as_in_googles_results():
+    from app.api.target_routes import competitor_host
+    from app.targets.handler import host_of_url
+
+    assert competitor_host("کفش.ir") == host_of_url("https://xn--zgbzz0a.ir/shop") == "xn--zgbzz0a.ir"
+    assert competitor_host("WWW.Example.COM:8080/page") == "example.com"
+    assert competitor_host("http://[1.2.3.4") is None  # not a 500
+
+
+def test_competitors_kept_under_gold_are_not_shown_after_a_downgrade():
+    from dataclasses import replace
+    from types import SimpleNamespace
+
+    from app.billing.plans import UNLIMITED
+
+    world = World()
+    keep_two_words(world)
+    world.call("PUT", "/competitors", competitors=["b.example"])
+    world.tracker().run_round()
+
+    class Basic:
+        def limits(self, tenant_id):
+            return replace(UNLIMITED, competitors=False)
+
+        def require_active(self, tenant_id):
+            return SimpleNamespace(active=True)
+
+    world.client.app.state.dependencies.billing = Basic()
+    shown = world.client.get("/v1/sites/site-1/target-keywords").json()
+    assert all(not check["rivals"] and not check["leaders"] for item in shown["keywords"] for check in item["checks"])
+    # Nor in what any other answer carries.
+    answered = world.call("PUT", "/brief", description="کفش", seeds=[])
+    assert all(not check["rivals"] and not check["watched"] for item in answered["keywords"] for check in item["checks"])
+    assert world.targets.find("site-1").keywords[0].checks[-1].rivals, "kept, for when the plan has them again"
