@@ -37,12 +37,14 @@ final class HoshyarSEO_Plugin {
 	 * @return void
 	 */
 	public function boot() {
-		$store = new HoshyarSEO_Title_Store();
-		$cache = new HoshyarSEO_Cache();
+		$store        = new HoshyarSEO_Title_Store();
+		$descriptions = new HoshyarSEO_Description_Store();
+		$cache        = new HoshyarSEO_Cache();
 
 		( new HoshyarSEO_Title_Filters( $store ) )->register();
+		( new HoshyarSEO_Description_Filters( $descriptions ) )->register();
 
-		$controller = new HoshyarSEO_REST_Controller( $store, $cache );
+		$controller = new HoshyarSEO_REST_Controller( $store, $cache, $descriptions );
 		add_action( 'rest_api_init', array( $controller, 'register_routes' ) );
 	}
 }

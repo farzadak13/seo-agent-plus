@@ -4,8 +4,9 @@
  *
  *   GET  /wp-json/hoshyarseo/v1/status
  *   GET  /wp-json/hoshyarseo/v1/page?url=...
- *   POST /wp-json/hoshyarseo/v1/title     {url, title, idempotency_key}
- *   POST /wp-json/hoshyarseo/v1/rollback  {url, change_id}
+ *   POST /wp-json/hoshyarseo/v1/title        {url, title, idempotency_key}
+ *   POST /wp-json/hoshyarseo/v1/description  {url, description, idempotency_key}   (0.2.0)
+ *   POST /wp-json/hoshyarseo/v1/rollback     {url, change_id}
  *
  * Authentication is WordPress's own: an application password for a user who
  * can edit the page. The plugin adds no credentials of its own, so revoking
@@ -31,6 +32,13 @@ class HoshyarSEO_REST_Controller {
 	private $store;
 
 	/**
+	 * Description override storage.
+	 *
+	 * @var HoshyarSEO_Description_Store
+	 */
+	private $descriptions;
+
+	/**
 	 * Cache purger.
 	 *
 	 * @var HoshyarSEO_Cache
@@ -40,12 +48,14 @@ class HoshyarSEO_REST_Controller {
 	/**
 	 * Constructor.
 	 *
-	 * @param HoshyarSEO_Title_Store $store Override storage.
-	 * @param HoshyarSEO_Cache       $cache Cache purger.
+	 * @param HoshyarSEO_Title_Store       $store        Title override storage.
+	 * @param HoshyarSEO_Cache             $cache        Cache purger.
+	 * @param HoshyarSEO_Description_Store $descriptions Description override storage.
 	 */
-	public function __construct( HoshyarSEO_Title_Store $store, HoshyarSEO_Cache $cache ) {
-		$this->store = $store;
-		$this->cache = $cache;
+	public function __construct( HoshyarSEO_Title_Store $store, HoshyarSEO_Cache $cache, HoshyarSEO_Description_Store $descriptions ) {
+		$this->store        = $store;
+		$this->cache        = $cache;
+		$this->descriptions = $descriptions;
 	}
 
 	/**
@@ -91,6 +101,28 @@ class HoshyarSEO_REST_Controller {
 				'args'                => array(
 					'url'             => $url_arg,
 					'title'           => array(
+						'required' => true,
+						'type'     => 'string',
+					),
+					'idempotency_key' => array(
+						'required'          => true,
+						'type'              => 'string',
+						'sanitize_callback' => 'sanitize_text_field',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			self::REST_NAMESPACE,
+			'/description',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'set_description' ),
+				'permission_callback' => array( $this, 'can_edit_page' ),
+				'args'                => array(
+					'url'             => $url_arg,
+					'description'     => array(
 						'required' => true,
 						'type'     => 'string',
 					),
@@ -161,6 +193,8 @@ class HoshyarSEO_REST_Controller {
 		return rest_ensure_response(
 			array(
 				'plugin_version'       => HOSHYARSEO_CONNECTOR_VERSION,
+				// What this version can change; the service asks before offering more.
+				'fields'               => array( 'title', 'description' ),
 				'seo_plugins'          => $this->detect_seo_plugins(),
 				'home_url'             => home_url( '/' ),
 				// An Editor or above can prove the site is theirs to HoshyarSEO.
@@ -195,6 +229,7 @@ class HoshyarSEO_REST_Controller {
 				'permalink'      => get_permalink( $post_id ),
 				'post_title'     => $post->post_title,
 				'override_title' => $this->store->get( $post_id ),
+				'override_description' => $this->descriptions->get( $post_id ),
 				'seo_plugins'    => $this->detect_seo_plugins(),
 				'modified_gmt'   => $post->post_modified_gmt,
 			)
@@ -226,7 +261,31 @@ class HoshyarSEO_REST_Controller {
 	}
 
 	/**
-	 * Undo one change.
+	 * Apply a meta description override.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function set_description( WP_REST_Request $request ) {
+		$post_id = $this->resolve( $request->get_param( 'url' ) );
+		if ( is_wp_error( $post_id ) ) {
+			return $post_id;
+		}
+		$change = $this->descriptions->apply(
+			$post_id,
+			(string) $request->get_param( 'description' ),
+			(string) $request->get_param( 'idempotency_key' )
+		);
+		if ( is_wp_error( $change ) ) {
+			return $change;
+		}
+		$change['purged']  = $this->cache->purge( $post_id );
+		$change['post_id'] = $post_id;
+		return rest_ensure_response( $change );
+	}
+
+	/**
+	 * Undo one change, whichever field it was about.
 	 *
 	 * @param WP_REST_Request $request Request.
 	 * @return WP_REST_Response|WP_Error
@@ -236,7 +295,12 @@ class HoshyarSEO_REST_Controller {
 		if ( is_wp_error( $post_id ) ) {
 			return $post_id;
 		}
-		$change = $this->store->rollback( $post_id, (string) $request->get_param( 'change_id' ) );
+		$change_id = (string) $request->get_param( 'change_id' );
+		// A change id is in the history of the store that made it, and only there.
+		$change = $this->store->rollback( $post_id, $change_id );
+		if ( is_wp_error( $change ) && 'hoshyarseo_unknown_change' === $change->get_error_code() ) {
+			$change = $this->descriptions->rollback( $post_id, $change_id );
+		}
 		if ( is_wp_error( $change ) ) {
 			return $change;
 		}

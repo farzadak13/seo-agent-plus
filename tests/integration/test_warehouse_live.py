@@ -250,3 +250,23 @@ def test_a_failure_under_the_same_property_still_keeps_the_good_copy():
     store.replace_day(a_day(10))
     store.record_failure(site_id="s1", day=DAY, property_url=PROPERTY, error="500")
     assert store.sync_status(site_id="s1", day=DAY).status == "synced"
+
+
+def test_a_pages_totals_sum_its_devices_day_by_day():
+    store = warehouse()
+    second = DAY - timedelta(days=1)
+    store.replace_day(GSCDay(
+        site_id="s1", day=DAY, property_url=PROPERTY,
+        totals=[Metrics(device=Device.MOBILE, clicks=7, impressions=150, position_sum=500.0)],
+        pages=[
+            PageMetrics(device=Device.MOBILE, url="https://tennisino.com/a", clicks=4, impressions=100, position_sum=300.0),
+            PageMetrics(device=Device.DESKTOP, url="https://tennisino.com/a", clicks=3, impressions=50, position_sum=200.0),
+            PageMetrics(device=Device.MOBILE, url="https://tennisino.com/b", clicks=9, impressions=90, position_sum=90.0),
+        ],
+        queries=[],
+    ))
+    store.replace_day(a_day(2, day=second))
+    totals = store.page_totals(site_id="s1", url="https://tennisino.com/a", start=second, end=DAY)
+    assert totals == {DAY: (7, 150, 500.0), second: (2, 100, 350.0)}
+    assert store.page_totals(site_id="s1", url="https://tennisino.com/a", start=DAY + timedelta(days=1), end=DAY + timedelta(days=2)) == {}
+    assert store.page_totals(site_id="s2", url="https://tennisino.com/a", start=second, end=DAY) == {}

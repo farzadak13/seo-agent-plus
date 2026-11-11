@@ -27,7 +27,9 @@ NEW_TITLE = "خرید کفش مردانه اصل | ارسال رایگان"
 class FakeWordPress:
     """One page, the connector's endpoints, and the public HTML they affect."""
 
-    def __init__(self, *, plugin_installed=True, password="pw"):
+    def __init__(self, *, plugin_installed=True, password="pw", version="0.2.0"):
+        self.version = version
+        self.description = None
         self.override = None
         self.history = []
         self.plugin_installed = plugin_installed
@@ -46,7 +48,7 @@ class FakeWordPress:
             title = self.rendered_title().replace("|", "&#124;")
             html = (
                 "<html><head><title>" + title + "</title>"
-                '<meta name="description" content="توضیح"></head>'
+                '<meta name="description" content="' + (self.description or "توضیح") + '"></head>'
                 "<body><svg><title>icon</title></svg></body></html>"
             )
             return HTTPResponse(200, html.encode("utf-8"))
@@ -60,11 +62,15 @@ class FakeWordPress:
         route = parsed.path.removeprefix("/wp-json/hoshyarseo/v1")
         payload = json.loads(body) if body else {}
         if route == "/status":
-            return self._json(200, {"plugin_version": "0.1.0", "seo_plugins": ["yoast"]})
+            status = {"plugin_version": self.version, "seo_plugins": ["yoast"]}
+            if self.version >= "0.2.0":
+                status["fields"] = ["title", "description"]
+            return self._json(200, status)
         if route == "/page":
             return self._json(
                 200,
-                {"post_id": 7, "status": "publish", "post_title": "H1", "override_title": self.override},
+                {"post_id": 7, "status": "publish", "post_title": "H1", "override_title": self.override,
+                 "override_description": self.description},
             )
         if route == "/title":
             for entry in self.history:
@@ -81,13 +87,26 @@ class FakeWordPress:
             self.override = payload["title"]
             self.history.append(entry)
             return self._json(200, entry)
+        if route == "/description" and self.version >= "0.2.0":
+            entry = {
+                "change_id": f"7:{len(self.history) + 1}", "idempotency_key": payload["idempotency_key"],
+                "previous": self.description, "new": payload["description"], "rolled_back": False,
+                "post_id": 7, "field": "description",
+            }
+            self.description = payload["description"]
+            self.history.append(entry)
+            return self._json(200, entry)
         if route == "/rollback":
             entry = next(e for e in self.history if e["change_id"] == payload["change_id"])
             if entry["rolled_back"]:
                 return self._json(200, entry)
-            if self.override != entry["new"]:
+            current = self.description if entry.get("field") == "description" else self.override
+            if current != entry["new"]:
                 return self._json(409, {"code": "hoshyarseo_changed_since", "message": "changed since"})
-            self.override = entry["previous"]
+            if entry.get("field") == "description":
+                self.description = entry["previous"]
+            else:
+                self.override = entry["previous"]
             entry["rolled_back"] = True
             return self._json(200, entry)
         return self._json(404, {"code": "rest_no_route"})
@@ -276,3 +295,84 @@ def test_exact_rollback_trusts_the_site_not_a_stale_cache():
     # The cache already shows the old title; the override must still be removed.
     assert wordpress.override is None
     assert actions.get(pending.action_id).status == ActionStatus.ROLLED_BACK
+
+
+
+def test_a_description_is_written_and_undone_to_what_the_seo_plugin_had():
+    wordpress = FakeWordPress()
+    adapter = make_adapter(wordpress)
+    assert adapter.supports_descriptions()
+    result = adapter.update_meta_description(
+        site_id="s1", normalized_url=URL, new_meta_description="توضیح تازه", idempotency_key="d1"
+    )
+    page = adapter.read_page(site_id="s1", normalized_url=URL)
+    assert page.meta_description == "توضیح تازه" and page.metadata["override_description"] == "توضیح تازه"
+    adapter.rollback_change(
+        request=AdapterRollbackRequest(site_id="s1", normalized_url=URL, change_id=result.change_id, idempotency_key="r")
+    )
+    assert wordpress.description is None, "no override at all, not the old text pinned"
+
+
+def test_an_older_plugin_is_asked_to_update_not_called_missing():
+    adapter = make_adapter(FakeWordPress(version="0.1.0"))
+    assert adapter.supports_descriptions() is False
+    with pytest.raises(HoshyarConnectorError, match="0.2.0 or later"):
+        adapter.update_meta_description(site_id="s1", normalized_url=URL, new_meta_description="x" * 80, idempotency_key="d")
+
+
+def test_a_description_goes_the_whole_way_through_the_connector():
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+
+    from app.descriptions.handler import propose_description_change
+
+    wordpress = FakeWordPress()
+    adapter = make_adapter(wordpress)
+    repository = InMemoryRepository()
+    actions = ManagedActionStore(repository)
+    sites = SiteStore(repository)
+    sites.create(make_site())
+    factory = FakeAdapterFactory(adapter)
+    execute = build_execute_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)
+    rollback = build_rollback_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)
+    page = SimpleNamespace(url=URL, meta_description="توضیح")
+    chosen = "توضیح تازهٔ صفحه با متنی کافی برای نمایش زیر عنوان در نتایج جستجوی گوگل و جذب کلیک جستجوگر"
+    pending = propose_description_change(
+        site_id="site-1", tenant_id="principal-1", job_id="job-1", page=page, keyword=None,
+        choices=[chosen], provider_id="fake", now=datetime(2026, 11, 6, tzinfo=timezone.utc),
+    )
+    actions.create(approve(pending, actor="principal-1"))
+    execute({"action_id": pending.action_id})
+    applied = actions.get(pending.action_id)
+    assert applied.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE, applied.error
+    assert wordpress.description == chosen
+
+    rollback({"action_id": pending.action_id})
+    assert actions.get(pending.action_id).status == ActionStatus.ROLLED_BACK
+    assert wordpress.description is None
+
+
+def test_a_site_served_only_over_http_is_read_over_http():
+    wordpress = FakeWordPress()
+    adapter = HoshyarConnectorAdapter(
+        config=HoshyarConnectorConfig(base_url="http://example.com/", username="editor", application_password="pw"),
+        transport=wordpress,
+        clock=lambda: 1_700_000_000,
+    )
+    # The page's identity is https, as every page's is.
+    page = adapter.read_page(site_id="s1", normalized_url=URL)
+    assert page.title == TEMPLATE_TITLE
+    public = [url for _, url, _, _ in wordpress.requests if "/wp-json/" not in url]
+    assert public and all(url.startswith("http://example.com/men-shoes?") for url in public)
+    # An https site is read over https, and another host is left as it is.
+    make_adapter(wordpress).read_page(site_id="s1", normalized_url=URL)
+    assert wordpress.requests[-1][1].startswith("https://example.com/men-shoes?")
+
+
+
+def test_a_second_description_tag_on_the_page_is_counted():
+    from app.site_adapters.hoshyarseo import _TitleParser
+
+    parser = _TitleParser()
+    parser.feed('<head><meta name="description" content="ours"><meta name="Description" content="theme"></head>')
+    assert parser.meta_description == "ours" and parser.description_tags == 2

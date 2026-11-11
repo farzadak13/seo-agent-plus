@@ -13,6 +13,9 @@ defined( 'ABSPATH' ) || exit;
 
 /**
  * Stores, reads and reverts title overrides.
+ *
+ * The meta keys and the length limit are read through static::, so a store for
+ * another field (HoshyarSEO_Description_Store) is this class with other values.
  */
 class HoshyarSEO_Title_Store {
 
@@ -20,6 +23,8 @@ class HoshyarSEO_Title_Store {
 	const META_HISTORY = '_hoshyarseo_title_history';
 	const HISTORY_SIZE = 20;
 	const MAX_LENGTH   = 300;
+	// What a message calls the stored value; a store for another field says its own.
+	const LABEL        = 'title';
 
 	/**
 	 * Current override for a post, or null when none is set.
@@ -28,7 +33,7 @@ class HoshyarSEO_Title_Store {
 	 * @return string|null
 	 */
 	public function get( $post_id ) {
-		$value = get_post_meta( absint( $post_id ), self::META_TITLE, true );
+		$value = get_post_meta( absint( $post_id ), static::META_TITLE, true );
 		return ( is_string( $value ) && '' !== $value ) ? $value : null;
 	}
 
@@ -49,10 +54,12 @@ class HoshyarSEO_Title_Store {
 		$key     = sanitize_text_field( $idempotency_key );
 
 		if ( '' === $title ) {
-			return new WP_Error( 'hoshyarseo_empty_title', __( 'The title must not be empty.', 'hoshyarseo-connector' ), array( 'status' => 422 ) );
+			/* translators: %s: the field, "title" or "meta description". */
+			return new WP_Error( 'hoshyarseo_empty_title', sprintf( __( 'The %s must not be empty.', 'hoshyarseo-connector' ), static::LABEL ), array( 'status' => 422 ) );
 		}
-		if ( mb_strlen( $title ) > self::MAX_LENGTH ) {
-			return new WP_Error( 'hoshyarseo_long_title', __( 'The title is too long.', 'hoshyarseo-connector' ), array( 'status' => 422 ) );
+		if ( mb_strlen( $title ) > static::MAX_LENGTH ) {
+			/* translators: %s: the field, "title" or "meta description". */
+			return new WP_Error( 'hoshyarseo_long_title', sprintf( __( 'The %s is too long.', 'hoshyarseo-connector' ), static::LABEL ), array( 'status' => 422 ) );
 		}
 		if ( '' === $key ) {
 			return new WP_Error( 'hoshyarseo_missing_key', __( 'An idempotency key is required.', 'hoshyarseo-connector' ), array( 'status' => 422 ) );
@@ -74,7 +81,7 @@ class HoshyarSEO_Title_Store {
 			'rolled_back'     => false,
 		);
 
-		update_post_meta( $post_id, self::META_TITLE, $title );
+		update_post_meta( $post_id, static::META_TITLE, $title );
 		$history[] = $entry;
 		$this->save_history( $post_id, $history );
 
@@ -104,13 +111,14 @@ class HoshyarSEO_Title_Store {
 				return $entry;
 			}
 			if ( $this->get( $post_id ) !== $entry['new'] ) {
-				return new WP_Error( 'hoshyarseo_changed_since', __( 'The title was changed after this change; it was not rolled back.', 'hoshyarseo-connector' ), array( 'status' => 409 ) );
+				/* translators: %s: the field, "title" or "meta description". */
+				return new WP_Error( 'hoshyarseo_changed_since', sprintf( __( 'The %s was changed after this change; it was not rolled back.', 'hoshyarseo-connector' ), static::LABEL ), array( 'status' => 409 ) );
 			}
 
 			if ( null === $entry['previous'] ) {
-				delete_post_meta( $post_id, self::META_TITLE );
+				delete_post_meta( $post_id, static::META_TITLE );
 			} else {
-				update_post_meta( $post_id, self::META_TITLE, $entry['previous'] );
+				update_post_meta( $post_id, static::META_TITLE, $entry['previous'] );
 			}
 
 			$history[ $index ]['rolled_back']    = true;
@@ -129,7 +137,7 @@ class HoshyarSEO_Title_Store {
 	 * @return array
 	 */
 	public function history( $post_id ) {
-		$history = get_post_meta( absint( $post_id ), self::META_HISTORY, true );
+		$history = get_post_meta( absint( $post_id ), static::META_HISTORY, true );
 		return is_array( $history ) ? $history : array();
 	}
 
@@ -141,7 +149,7 @@ class HoshyarSEO_Title_Store {
 	 * @return void
 	 */
 	private function save_history( $post_id, array $history ) {
-		update_post_meta( $post_id, self::META_HISTORY, array_slice( $history, -self::HISTORY_SIZE ) );
+		update_post_meta( $post_id, static::META_HISTORY, array_slice( $history, -static::HISTORY_SIZE ) );
 	}
 
 	/**

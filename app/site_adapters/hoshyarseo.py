@@ -112,11 +112,19 @@ class HoshyarConnectorAdapter:
 
     @property
     def capabilities(self) -> set[ExecutionCapability]:
+        # Descriptions from plugin 0.2.0; supports_descriptions() asks the site.
         return {
             ExecutionCapability.READ_PAGE,
             ExecutionCapability.UPDATE_TITLE,
+            ExecutionCapability.UPDATE_META_DESCRIPTION,
             ExecutionCapability.ROLLBACK_CHANGE,
         }
+
+    def supports_descriptions(self) -> bool:
+        """Whether the plugin on the site can write descriptions (0.2.0 says so in /status)."""
+        data = self._call("GET", "/status")
+        fields = data.get("fields")
+        return isinstance(fields, list) and "description" in fields
 
     # --- reading ------------------------------------------------------------
 
@@ -144,8 +152,10 @@ class HoshyarConnectorAdapter:
                 "post_type": info.get("post_type"),
                 "post_title": info.get("post_title"),
                 "override_title": info.get("override_title"),
+                "override_description": info.get("override_description"),
                 "seo_plugins": info.get("seo_plugins", []),
                 "permalink": info.get("permalink"),
+                "description_tags": rendered.description_tags,
             },
         )
 
@@ -153,6 +163,11 @@ class HoshyarConnectorAdapter:
         # A query string most page caches treat as a miss, so the check sees
         # the page as it is now rather than as it was cached.
         parsed = urlparse(url)
+        # A page's identity is always https (canonicalize_url); a site that is
+        # only served over http is read the way it is served.
+        site = urlparse(str(self._config.base_url))
+        if site.scheme == "http" and parsed.scheme == "https" and parsed.hostname == site.hostname:
+            parsed = parsed._replace(scheme="http", netloc=site.netloc)
         query = parse_qsl(parsed.query, keep_blank_values=True)
         query.append(("hoshyarseo_check", str(int(self._clock()))))
         fresh = urlunparse(parsed._replace(query=urlencode(query)))
@@ -196,6 +211,36 @@ class HoshyarConnectorAdapter:
             metadata={"post_id": change.get("post_id"), "purged": change.get("purged", [])},
         )
 
+    def update_meta_description(
+        self, *, site_id: str, normalized_url: str, new_meta_description: str, idempotency_key: str
+    ) -> AdapterOperationResult:
+        try:
+            change = self._call(
+                "POST",
+                "/description",
+                {"url": normalized_url, "description": new_meta_description, "idempotency_key": idempotency_key},
+            )
+        except HoshyarConnectorError as exc:
+            # An older plugin has no /description route: it answers "no route",
+            # which _explain words as "not installed" though the plugin is there.
+            if exc.status_code == 404 and "not installed or not active" in str(exc):
+                raise HoshyarConnectorError(
+                    "Update the HoshyarSEO plugin on your site to 0.2.0 or later to change meta descriptions.",
+                    status_code=404,
+                ) from exc
+            raise
+        return AdapterOperationResult(
+            success=True,
+            operation=AdapterOperation.UPDATE_META_DESCRIPTION,
+            site_id=site_id,
+            normalized_url=normalized_url,
+            message="Description override applied.",
+            change_id=CHANGE_PREFIX + str(change["change_id"]),
+            previous_value=change.get("previous"),
+            new_value=change.get("new"),
+            metadata={"post_id": change.get("post_id"), "purged": change.get("purged", [])},
+        )
+
     def rollback_change(self, *, request: AdapterRollbackRequest) -> AdapterOperationResult:
         if not request.change_id.startswith(CHANGE_PREFIX):
             raise HoshyarConnectorError("Not a HoshyarSEO change id.")
@@ -224,7 +269,7 @@ class HoshyarConnectorAdapter:
             operation=AdapterOperation.ROLLBACK_CHANGE,
             site_id=request.site_id,
             normalized_url=request.normalized_url,
-            message="Title override rolled back.",
+            message="Override rolled back.",
             change_id=request.change_id,
             metadata={"post_id": change.get("post_id"), "purged": change.get("purged", [])},
         )
@@ -232,9 +277,8 @@ class HoshyarConnectorAdapter:
     # --- not offered by the connector ---------------------------------------
 
     def _unsupported(self, *args, **kwargs):
-        raise HoshyarConnectorError("The HoshyarSEO connector only changes titles.")
+        raise HoshyarConnectorError("The HoshyarSEO connector only changes titles and meta descriptions.")
 
-    update_meta_description = _unsupported
     update_content = _unsupported
     update_internal_links = _unsupported
     publish_content = _unsupported
@@ -288,6 +332,8 @@ class _TitleParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.title: str | None = None
         self.meta_description = ""
+        # More than one: a theme or another SEO plugin prints its own as well.
+        self.description_tags = 0
         self._in_title = False
         self._svg_depth = 0
         self._buffer: list[str] = []
@@ -300,8 +346,10 @@ class _TitleParser(HTMLParser):
             self._buffer = []
         elif tag == "meta":
             values = dict(attrs)
-            if (values.get("name") or "").lower() == "description" and not self.meta_description:
-                self.meta_description = unescape(values.get("content") or "").strip()
+            if (values.get("name") or "").lower() == "description":
+                self.description_tags += 1
+                if not self.meta_description:
+                    self.meta_description = unescape(values.get("content") or "").strip()
 
     def handle_endtag(self, tag):
         if tag == "svg" and self._svg_depth:

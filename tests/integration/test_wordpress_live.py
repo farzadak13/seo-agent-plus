@@ -118,7 +118,7 @@ def connector() -> HoshyarConnectorAdapter:
 
 def test_the_connector_answers_and_the_editor_may_verify_ownership():
     status = connector().status()
-    assert status["plugin_version"] == "0.1.0"
+    assert status["plugin_version"] == "0.2.0"
     assert status["can_verify_ownership"] is True
 
 
@@ -219,3 +219,129 @@ def test_a_proposal_for_a_title_the_page_no_longer_has_is_not_written():
     assert refused.status == ActionStatus.FAILED
     assert refused.history[-1].reason == "page_changed_since_proposal"
     assert adapter.read_page(site_id="site-1", normalized_url=PAGE).title == before.title
+
+
+def test_a_description_is_written_shown_and_undone_on_a_real_wordpress():
+    """No SEO plugin on the test site: the connector prints the tag itself."""
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from app.descriptions.handler import propose_description_change
+
+    adapter = connector()
+    assert adapter.supports_descriptions()
+    before = adapter.read_page(site_id="site-1", normalized_url=PAGE)
+    assert before.metadata["override_description"] is None
+
+    repository = InMemoryRepository()
+    actions = ManagedActionStore(repository)
+    sites = SiteStore(repository)
+    sites.create(make_site())
+    factory = FakeAdapterFactory(adapter)
+    execute = build_execute_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)
+    rollback = build_rollback_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)
+    chosen = "توضیح آزمایشی هوشیار سئو برای این صفحه، با متنی که زیر عنوان در نتایج جستجو دیده می‌شود."
+    pending = propose_description_change(
+        site_id="site-1", tenant_id="principal-1", job_id=f"wp-live-{uuid.uuid4().hex[:12]}",
+        page=SimpleNamespace(url=PAGE, meta_description=before.meta_description), keyword=None,
+        choices=[chosen], provider_id="live-test", now=datetime.now(timezone.utc),
+    )
+    actions.create(approve(pending, actor="principal-1"))
+    try:
+        execute({"action_id": pending.action_id})
+        applied = actions.get(pending.action_id)
+        assert applied.status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE, applied.error
+        assert adapter.read_page(site_id="site-1", normalized_url=PAGE).meta_description == chosen
+
+        rollback({"action_id": pending.action_id})
+        assert actions.get(pending.action_id).status == ActionStatus.ROLLED_BACK
+        after = adapter.read_page(site_id="site-1", normalized_url=PAGE)
+        assert after.metadata["override_description"] is None
+        assert after.meta_description == before.meta_description
+    finally:
+        _undo_if_left_applied(adapter, actions.get(pending.action_id))
+
+
+def _live_world(adapter):
+    repository = InMemoryRepository()
+    actions = ManagedActionStore(repository)
+    sites = SiteStore(repository)
+    sites.create(make_site())
+    factory = FakeAdapterFactory(adapter)
+    execute = build_execute_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)
+    rollback = build_rollback_action_handler(action_store=actions, site_store=sites, adapter_factory=factory)
+    return actions, execute, rollback
+
+
+def _description_pending(before, chosen):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from app.descriptions.handler import propose_description_change
+
+    return propose_description_change(
+        site_id="site-1", tenant_id="principal-1", job_id=f"wp-live-{uuid.uuid4().hex[:12]}",
+        page=SimpleNamespace(url=PAGE, meta_description=before.meta_description), keyword=None,
+        choices=[chosen], provider_id="live-test", now=datetime.now(timezone.utc),
+    )
+
+
+def test_a_description_with_quotes_and_ampersands_comes_back_exactly():
+    """What the customer approved is what the page says, character for character.
+
+    No < or >: the writer never proposes them (app.descriptions.writer.usable),
+    and the plugin strips anything shaped like a tag, as WordPress does."""
+    adapter = connector()
+    before = adapter.read_page(site_id="site-1", normalized_url=PAGE)
+    actions, execute, rollback = _live_world(adapter)
+    chosen = 'کفش "اسپرت" و رسمی & چرم طبیعی، با راهنمای انتخاب سایز برای هر قد و سلیقه، همه در یک صفحه'
+    pending = _description_pending(before, chosen)
+    actions.create(approve(pending, actor="principal-1"))
+    try:
+        execute({"action_id": pending.action_id})
+        assert actions.get(pending.action_id).status == ActionStatus.MEASUREMENT_WINDOW_ACTIVE, actions.get(pending.action_id).error
+        page = adapter.read_page(site_id="site-1", normalized_url=PAGE)
+        assert page.meta_description == chosen
+        assert page.metadata["override_description"] == chosen
+        # And it was escaped on the page, not pasted in as markup.
+        html = _OPENER.open(PAGE, timeout=10).read().decode("utf-8")
+        assert "&quot;اسپرت&quot;" in html or "&#034;اسپرت&#034;" in html or "&#34;اسپرت&#34;" in html
+        assert "رسمی &amp; چرم" in html or "رسمی &#038; چرم" in html
+        rollback({"action_id": pending.action_id})
+        assert actions.get(pending.action_id).status == ActionStatus.ROLLED_BACK
+    finally:
+        _undo_if_left_applied(adapter, actions.get(pending.action_id))
+    assert adapter.read_page(site_id="site-1", normalized_url=PAGE).meta_description == before.meta_description
+
+
+def test_a_title_and_a_description_on_one_page_are_undone_each_on_its_own():
+    adapter = connector()
+    before = adapter.read_page(site_id="site-1", normalized_url=PAGE)
+    actions, execute, rollback = _live_world(adapter)
+    run_id = f"wp-live-{uuid.uuid4().hex[:12]}"
+    title = propose_title_change(
+        action=build_action(strategy=make_strategy().model_copy(update={"normalized_url": PAGE}), action_id="action-candidate-1"),
+        run_id=run_id, tenant_id="principal-1", proposal_id=f"proposal:{run_id}",
+        proposed_title=NEW_TITLE, current_title=before.title, provider_id="live-test",
+    )
+    chosen = "توضیح آزمایشی دوم هوشیار سئو برای همین صفحه، تا عنوان و توضیحات کنار هم آزموده شوند."
+    description = _description_pending(before, chosen)
+    for pending in (title, description):
+        actions.create(approve(pending, actor="principal-1"))
+    try:
+        execute({"action_id": title.action_id})
+        execute({"action_id": description.action_id})
+        both = adapter.read_page(site_id="site-1", normalized_url=PAGE)
+        assert (both.title, both.meta_description) == (NEW_TITLE, chosen)
+
+        # Undoing the title leaves the description, and the other way round.
+        rollback({"action_id": title.action_id})
+        after_title = adapter.read_page(site_id="site-1", normalized_url=PAGE)
+        assert (after_title.title, after_title.meta_description) == (before.title, chosen)
+        rollback({"action_id": description.action_id})
+        after_both = adapter.read_page(site_id="site-1", normalized_url=PAGE)
+        assert (after_both.title, after_both.meta_description) == (before.title, before.meta_description)
+        assert after_both.metadata["override_title"] is None and after_both.metadata["override_description"] is None
+    finally:
+        for pending in (title, description):
+            _undo_if_left_applied(adapter, actions.get(pending.action_id))

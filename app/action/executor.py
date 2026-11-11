@@ -427,6 +427,9 @@ def _verify(managed: ManagedAction, adapter) -> ManagedAction:
     detail = {f"rendered_{field.name}": field.on_page(page)}
     if stored_ok and not rendered_ok:
         detail["note"] = "stored on the site; the public page is still cached"
+    if field.name == "description" and (page.metadata or {}).get("description_tags", 1) > 1:
+        # Ours comes first and is the one read; Google may take either.
+        detail["duplicate_description_tags"] = page.metadata["description_tags"]
     return managed.record(
         action=verified,
         actor=SYSTEM_ACTOR,

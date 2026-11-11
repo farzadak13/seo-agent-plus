@@ -1,19 +1,21 @@
 === HoshyarSEO Connector ===
 Requires at least: 6.0
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 
-Lets HoshyarSEO apply page titles you have approved, and undo them exactly.
+Lets HoshyarSEO apply page titles and meta descriptions you have approved, and undo them exactly.
 
 == Description ==
 
-HoshyarSEO proposes better page titles from your Search Console data. Nothing
-is changed until you approve it. This plugin is how an approved title reaches
-your site.
+HoshyarSEO proposes better page titles and meta descriptions from your
+Search Console data and your site's own pages. Nothing is changed until you
+approve it. This plugin is how an approved title or description reaches your
+site.
 
-* The title is applied as an override at render time. Your post title (H1),
-  your SEO plugin's settings and your content are never edited.
+* Titles and descriptions are applied as overrides at render time. Your post
+  title (H1), your SEO plugin's settings and your content are never edited.
+  With no SEO plugin, the description tag is printed by this plugin.
 * Works with Yoast SEO, Rank Math, All in One SEO, SEOPress, or no SEO plugin.
 * Every change can be undone exactly. Undo refuses to discard a change made
   after it.
@@ -35,5 +37,11 @@ All require an application password for a user who can edit the page.
 
 GET  /wp-json/hoshyarseo/v1/status
 GET  /wp-json/hoshyarseo/v1/page?url=<public URL>
-POST /wp-json/hoshyarseo/v1/title     {"url", "title", "idempotency_key"}
-POST /wp-json/hoshyarseo/v1/rollback  {"url", "change_id"}
+POST /wp-json/hoshyarseo/v1/title        {"url", "title", "idempotency_key"}
+POST /wp-json/hoshyarseo/v1/description  {"url", "description", "idempotency_key"}
+POST /wp-json/hoshyarseo/v1/rollback     {"url", "change_id"}
+
+== Changelog ==
+
+= 0.2.0 =
+* Meta descriptions: applied and undone like titles, with Yoast SEO, Rank Math, All in One SEO, SEOPress, or none.

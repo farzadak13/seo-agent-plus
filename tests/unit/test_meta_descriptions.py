@@ -254,3 +254,20 @@ def test_another_customers_site_is_not_found():
     world = World()
     world.sites.create(Site(site_id="site-2", principal_id="principal-2", name="o", base_url="https://other.example/"))
     world.post("/v1/sites/site-2/meta-descriptions", {"url": "https://other.example/"}, expect=404)
+
+
+
+@pytest.mark.parametrize(("answer", "expect"), [(True, 202), (False, 409), (RuntimeError("timeout"), 409)])
+def test_a_connected_site_is_asked_whether_its_plugin_writes_descriptions(answer, expect):
+    class Plugin(Connected):
+        def supports_descriptions(self):
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    world = World(adapter=Plugin(), connection="hoshyarseo")
+    reply = world.ask(expect=expect)
+    if isinstance(answer, Exception):
+        assert "did not answer" in reply["detail"], "a site that did not answer is not an old plugin"
+    elif answer is False:
+        assert "Update the HoshyarSEO plugin" in reply["detail"]

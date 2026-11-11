@@ -24,12 +24,29 @@ _OPEN = frozenset({ActionStatus.AWAITING_APPROVAL, ActionStatus.APPROVED, Action
 
 
 def _can_write_descriptions(dependencies, site) -> bool:
-    """A site applied by hand always can; a connected one only if its connector says so."""
+    """A site applied by hand always can; a connected one only if its connector says so.
+
+    Raises 409 when the site could not be asked: that is not an old plugin.
+    """
     try:
         adapter = dependencies.adapter_factory.build(site)
     except Exception:
         return False
-    return getattr(adapter, "manual_apply", False) or ExecutionCapability.UPDATE_META_DESCRIPTION in set(adapter.capabilities)
+    if getattr(adapter, "manual_apply", False):
+        return True
+    if ExecutionCapability.UPDATE_META_DESCRIPTION not in set(adapter.capabilities):
+        return False
+    # The HoshyarSEO plugin can from 0.2.0: ask the site which it has.
+    check = getattr(adapter, "supports_descriptions", None)
+    if not callable(check):
+        return True
+    try:
+        return check()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The site's connection did not answer; check it in the project settings and try again.",
+        ) from exc
 
 
 class DescriptionRequest(BaseModel):
